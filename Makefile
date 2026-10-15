@@ -1,0 +1,29 @@
+APP_NAME  := postme
+CONFIG    ?= release
+BUILD_DIR := build
+APP_DIR   := $(BUILD_DIR)/$(APP_NAME).app
+
+.PHONY: help build app run open clean
+
+help:
+	@echo "make build   - 编译 release 产物"
+	@echo "make app     - 编译并打包成 build/postme.app(含 ad-hoc 签名)"
+	@echo "make run     - 开发期直接运行(debug,靠 AppDelegate 兜底激活)"
+	@echo "make open    - 打包并用 LaunchServices 打开(菜单栏/聚焦最正常)"
+	@echo "make clean   - 清理构建产物"
+
+build:
+	swift build -c $(CONFIG)
+
+app:
+	CONFIG=$(CONFIG) ./scripts/bundle.sh
+
+run:
+	swift run $(APP_NAME)
+
+open: app
+	open $(APP_DIR)
+
+clean:
+	swift package clean
+	rm -rf $(BUILD_DIR)

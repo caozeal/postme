@@ -1,0 +1,10 @@
+# 构建产物
+.build/
+build/
+*.o
+
+# harness 过程产物（状态库与过程报告不进版本库）
+.harness/
+
+# macOS
+.DS_Store
