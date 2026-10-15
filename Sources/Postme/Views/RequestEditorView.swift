@@ -169,10 +169,12 @@ struct RequestEditorView: View {
     }
 
     /// Params 页脚展示合并后的最终 URL。
-    /// 走与发送完全相同的实现（`RequestExecutor.previewURL`），避免预览与实际不一致。
-    /// 注意：仅展示，不含变量替换——变量在发送时才还原。
+    ///
+    /// 完整走一遍发送前的处理：**先变量替换**（与 `AppState.resolveDraft` 同源），
+    /// 再交给 `RequestExecutor.previewURL` 做 query 合并与编码。
+    /// 目标是让这一栏真的等于「将要发出的 URL」——不然它就是在误导人。
     private var effectiveURLPreview: String {
-        RequestExecutor.previewURL(app.draft)
+        RequestExecutor.previewURL(app.resolvedDraft)
     }
 
     // MARK: - 保存弹窗

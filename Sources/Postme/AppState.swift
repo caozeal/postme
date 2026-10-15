@@ -142,6 +142,18 @@ final class AppState {
 
     var executorOptions: RequestExecutorOptions { workspace.settings.executorOptions }
 
+    /// 当前编辑请求做变量替换后的副本。
+    ///
+    /// 预览与发送**共用这一个入口**：否则「最终 URL」会在两处出现分歧
+    /// （曾经就发生过——预览没做替换，`{{baseUrl}}` 被 URLComponents 编码成
+    /// `%7B%7BbaseUrl%7D%7D`，而实发的是替换后的地址，用户会以为 URL 被弄坏了）。
+    private func resolveDraft() -> (request: APIRequest, unresolved: [String]) {
+        VariableResolver.resolve(draft, variables: activeEnvironment?.variableMap ?? [:])
+    }
+
+    /// 预览用：变量替换后的请求。
+    var resolvedDraft: APIRequest { resolveDraft().request }
+
     // MARK: - 发送
 
     func send() async {
@@ -150,9 +162,7 @@ final class AppState {
         errorMessage = nil
         defer { isSending = false }
 
-        // 变量替换（{{var}} → 环境变量 / 内置动态变量）
-        let variables = activeEnvironment?.variableMap ?? [:]
-        let resolved = VariableResolver.resolve(draft, variables: variables)
+        let resolved = resolveDraft()
         unresolvedVariables = resolved.unresolved
         let outgoing = resolved.request
 
