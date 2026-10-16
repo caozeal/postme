@@ -70,6 +70,11 @@ struct APIResponse {
     let receivedAt: Date
     /// 实际请求的最终 URL（跟随重定向后）。
     let finalURL: URL?
+    /// 响应体因超过 `RequestExecutorOptions.maxResponseBytes` 被截断（只拿到前一段）。
+    /// 与展示层的截断不同：这里数据本身就没收全，任何解析都必须当作不完整。
+    var isBodyTruncated: Bool = false
+    /// 截断时生效的上限，用于如实说明"超过了多少"。0 表示未截断。
+    var bodyLimitBytes: Int = 0
 
     /// 超过该大小的响应体在界面上截断展示，避免主线程卡死。
     static let displayTruncationThreshold = 2 * 1024 * 1024
@@ -83,7 +88,9 @@ struct APIResponse {
         mimeType: String?,
         timing: RequestTiming,
         receivedAt: Date = Date(),
-        finalURL: URL? = nil
+        finalURL: URL? = nil,
+        isBodyTruncated: Bool = false,
+        bodyLimitBytes: Int = 0
     ) {
         self.statusCode = statusCode
         self.headers = headers
@@ -92,6 +99,8 @@ struct APIResponse {
         self.timing = timing
         self.receivedAt = receivedAt
         self.finalURL = finalURL
+        self.isBodyTruncated = isBodyTruncated
+        self.bodyLimitBytes = bodyLimitBytes
     }
 
     /// 从 HTTPURLResponse 构造。
@@ -201,10 +210,14 @@ struct APIResponse {
     /// 调用方（AppState）在收到响应时计算一次并缓存，不要在视图 body 里反复调用。
     func displayBodyText() -> String {
         let limit = APIResponse.displayTruncationThreshold
-        var truncated = false
+        // 传输层已截断（超过 maxResponseBytes，数据本身没收全）时，无论如何都不能当完整内容处理：
+        // 美化半截 JSON 必然失败，失败后回退原文又会让人以为这就是全部响应。
+        var truncated = isBodyTruncated
         let raw: String
 
-        if body.count > limit {
+        if isBodyTruncated {
+            raw = String(decoding: body.prefix(limit), as: UTF8.self)
+        } else if body.count > limit {
             raw = String(decoding: body.prefix(limit), as: UTF8.self)
             truncated = true
         } else {
@@ -215,7 +228,10 @@ struct APIResponse {
         if !truncated, looksLikeJSON, let pretty = JSONTools.pretty(raw) {
             text = pretty
         }
-        if truncated {
+        if isBodyTruncated {
+            let limitText = bodyLimitBytes > 0 ? formatBytes(bodyLimitBytes) : "配置"
+            text += "\n\n…（响应体超过 \(limitText) 上限，已停止接收；以上为前 \(formatBytes(body.count))）"
+        } else if truncated {
             text += "\n\n…（响应体 \(formatBytes(bodySize)) 过大，已截断显示）"
         }
         return text

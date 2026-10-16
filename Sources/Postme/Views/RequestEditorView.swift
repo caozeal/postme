@@ -18,6 +18,11 @@ struct RequestEditorView: View {
             content
         }
         .sheet(isPresented: $app.showSaveSheet) { saveSheet }
+        // 草稿编辑即防抖落盘（600ms 合并）。原先草稿只在退出时落盘，
+        // 崩溃或强杀就会丢掉整个编辑中的请求。
+        .onChange(of: app.draft) { _, _ in
+            app.persistDraft()
+        }
     }
 
     /// 上一次发送中存在未解析变量时的提示。
@@ -101,7 +106,11 @@ struct RequestEditorView: View {
 
     private var sendButton: some View {
         Button {
-            Task { await app.send() }
+            if app.isSending {
+                app.cancelSend()
+            } else {
+                Task { await app.send() }
+            }
         } label: {
             HStack(spacing: 6) {
                 if app.isSending {
@@ -109,13 +118,14 @@ struct RequestEditorView: View {
                 } else {
                     Image(systemName: "paperplane.fill")
                 }
-                Text(app.isSending ? "发送中" : "发送")
+                Text(app.isSending ? "取消" : "发送")
             }
             .frame(minWidth: 64)
         }
         .buttonStyle(.borderedProminent)
-        .disabled(app.draft.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || app.isSending)
-        .help("发送请求 (⌘↩)")
+        .tint(app.isSending ? .red : nil)
+        .disabled(!app.isSending && app.draft.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .help(app.isSending ? "取消请求 (⌘.)" : "发送请求 (⌘↩)")
     }
 
     // MARK: - 分页
@@ -206,7 +216,7 @@ struct RequestEditorView: View {
 
             HStack {
                 Spacer()
-                Button("取消") { app.showSaveSheet = false }
+                Button("取消") { app.cancelSaveSheet() }
                 Button("保存") { app.commitSaveSheet() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(app.saveSheetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

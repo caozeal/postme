@@ -21,6 +21,9 @@ enum FileActions {
             if result.environment != nil {
                 message += "同时创建了对应的变量环境。"
             }
+            if !result.warnings.isEmpty {
+                message += "\n\n需要注意：\n" + result.warnings.map { "• \($0)" }.joined(separator: "\n")
+            }
             app.alertMessage = .init(text: message)
         } catch {
             app.alertMessage = .init(text: "导入失败：\(error.localizedDescription)")

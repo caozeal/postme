@@ -3,10 +3,11 @@ CONFIG    ?= release
 BUILD_DIR := build
 APP_DIR   := $(BUILD_DIR)/$(APP_NAME).app
 
-.PHONY: help build app run open clean
+.PHONY: help build test app run open clean
 
 help:
 	@echo "make build   - 编译 release 产物"
+	@echo "make test    - 跑逻辑层测试(swift test)"
 	@echo "make app     - 编译并打包成 build/postme.app(含 ad-hoc 签名)"
 	@echo "make run     - 开发期直接运行(debug,靠 AppDelegate 兜底激活)"
 	@echo "make open    - 打包并用 LaunchServices 打开(菜单栏/聚焦最正常)"
@@ -14,6 +15,9 @@ help:
 
 build:
 	swift build -c $(CONFIG)
+
+test:
+	swift test
 
 app:
 	CONFIG=$(CONFIG) ./scripts/bundle.sh

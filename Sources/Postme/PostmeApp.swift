@@ -52,6 +52,10 @@ struct PostmeApp: App {
                 Button("发送请求") { Task { await app.send() } }
                     .keyboardShortcut(.return, modifiers: .command)
 
+                Button("取消请求") { app.cancelSend() }
+                    .keyboardShortcut(".", modifiers: .command)
+                    .disabled(!app.isSending)
+
                 Divider()
 
                 Button("搜索请求") { app.requestSearchFocus() }

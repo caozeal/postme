@@ -237,7 +237,11 @@ private struct ResponseBodyPane: View {
                 .fixedSize()
             }
 
-            if response.bodySize > APIResponse.displayTruncationThreshold {
+            if response.isBodyTruncated {
+                Label("响应体超过上限，已停止接收", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            } else if response.bodySize > APIResponse.displayTruncationThreshold {
                 Label("已截断显示", systemImage: "scissors")
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)

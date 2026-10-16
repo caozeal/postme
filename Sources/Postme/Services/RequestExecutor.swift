@@ -4,6 +4,8 @@ import Foundation
 enum RequestFailure: LocalizedError {
     case invalidURL(String)
     case transport(Error)
+    /// 用户主动取消。**不是错误**：调用方应静默回到空闲，不报错、不记历史。
+    case cancelled
     case unexpected
 
     var errorDescription: String? {
@@ -12,6 +14,8 @@ enum RequestFailure: LocalizedError {
             return raw.isEmpty ? "URL 为空" : "URL 无效：\(raw)"
         case .transport(let error):
             return error.localizedDescription
+        case .cancelled:
+            return "请求已取消"
         case .unexpected:
             return "未收到有效的 HTTP 响应"
         }
@@ -23,12 +27,27 @@ struct RequestExecutorOptions: Equatable {
     var timeout: TimeInterval
     var followRedirects: Bool
     var allowInsecureTLS: Bool
+    /// 单个响应体最多驻留的字节数。
+    ///
+    /// 展示层的截断阈值（`APIResponse.displayTruncationThreshold`）只影响**显示文本**，
+    /// 不影响内存——实测一个 120 MB 的响应会让 phys_footprint 从 2 MB 涨到 147 MB，
+    /// 与"省内存"这个立身之本直接冲突。所以这里在**传输层**设硬上限：
+    /// 超出即停止累积、取消该 task，并如实标记截断。
+    var maxResponseBytes: Int
 
-    init(timeout: TimeInterval = 30, followRedirects: Bool = true, allowInsecureTLS: Bool = false) {
+    init(
+        timeout: TimeInterval = 30,
+        followRedirects: Bool = true,
+        allowInsecureTLS: Bool = false,
+        maxResponseBytes: Int = RequestExecutorOptions.defaultMaxResponseBytes
+    ) {
         self.timeout = timeout
         self.followRedirects = followRedirects
         self.allowInsecureTLS = allowInsecureTLS
+        self.maxResponseBytes = maxResponseBytes
     }
+
+    static let defaultMaxResponseBytes = 16 * 1024 * 1024
 }
 
 /// 基于 URLSession 的请求执行器。
@@ -50,6 +69,12 @@ final class RequestExecutor: NSObject, URLSessionDataDelegate {
     private var taskMetrics: [Int: URLSessionTaskMetrics] = [:]
     private var continuations: [Int: CheckedContinuation<APIResponse, Error>] = [:]
     private var startDates: [Int: Date] = [:]
+    private var liveTasks: [Int: URLSessionTask] = [:]
+    /// 因超过 `maxResponseBytes` 被主动取消的 task：完成回调里要把这种取消
+    /// 转成"部分响应 + 截断标记"，而不是报错。
+    private var truncatedTasks: Set<Int> = []
+    /// 被用户主动取消的 task。
+    private var userCancelledTasks: Set<Int> = []
 
     init(options: RequestExecutorOptions = RequestExecutorOptions()) {
         self.options = options
@@ -97,10 +122,34 @@ final class RequestExecutor: NSObject, URLSessionDataDelegate {
             lock.lock()
             continuations[identifier] = continuation
             startDates[identifier] = Date()
+            liveTasks[identifier] = task
             lock.unlock()
 
             task.resume()
         }
+    }
+
+    /// 取消当前在飞请求（用户点「取消」或按 ⌘.）。
+    ///
+    /// 取消是**用户意图**，不是失败：完成回调会以 `RequestFailure.cancelled` 结束，
+    /// 由调用方静默处理。返回被取消的 task 数量（0 表示没有在飞请求）。
+    @discardableResult
+    func cancel() -> Int {
+        lock.lock()
+        // 先清掉"上一次取消时标记、但那之后已完成"的 task id。
+        // 这类条目不会自然消失：标记与完成回调可能交错，留下一个永不匹配的 id。
+        // 只清已完成（已从 liveTasks 移除）的，绝不碰仍在飞的——否则完成回调
+        // 会把用户取消误判成传输错误。
+        userCancelledTasks.formIntersection(liveTasks.keys)
+
+        let tasks = Array(liveTasks.values)
+        for identifier in liveTasks.keys {
+            userCancelledTasks.insert(identifier)
+        }
+        lock.unlock()
+
+        for task in tasks { task.cancel() }
+        return tasks.count
     }
 
     // MARK: - URLRequest 组装
@@ -243,8 +292,32 @@ final class RequestExecutor: NSObject, URLSessionDataDelegate {
     // MARK: - URLSessionDataDelegate
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let identifier = dataTask.taskIdentifier
+
         lock.lock()
-        buffers[dataTask.taskIdentifier, default: Data()].append(data)
+        let existing = buffers[identifier] ?? Data()
+        let remaining = options.maxResponseBytes - existing.count
+
+        if remaining <= 0 {
+            // 已达上限：不再累积，标记截断并取消下载（省带宽与时间）。
+            let shouldCancel = truncatedTasks.insert(identifier).inserted
+            let task = liveTasks[identifier]
+            lock.unlock()
+            if shouldCancel { task?.cancel() }
+            return
+        }
+
+        if data.count > remaining {
+            // 这一批超出上限：只保留到上限，标记截断并取消。
+            buffers[identifier] = existing + data.prefix(remaining)
+            let shouldCancel = truncatedTasks.insert(identifier).inserted
+            let task = liveTasks[identifier]
+            lock.unlock()
+            if shouldCancel { task?.cancel() }
+            return
+        }
+
+        buffers[identifier] = existing + data
         lock.unlock()
     }
 
@@ -262,9 +335,29 @@ final class RequestExecutor: NSObject, URLSessionDataDelegate {
         let metrics = taskMetrics.removeValue(forKey: identifier)
         let start = startDates.removeValue(forKey: identifier) ?? Date()
         let continuation = continuations.removeValue(forKey: identifier)
+        let wasTruncated = truncatedTasks.remove(identifier) != nil
+        let wasUserCancelled = userCancelledTasks.remove(identifier) != nil
+        liveTasks.removeValue(forKey: identifier)
         lock.unlock()
 
         guard let continuation else { return }
+
+        // 用户主动取消：静默结束，不是错误。
+        if wasUserCancelled, error != nil {
+            continuation.resume(throwing: RequestFailure.cancelled)
+            return
+        }
+
+        // 超上限是我们自己取消的：若已拿到 HTTP 响应，就返回**部分响应**并标记截断；
+        // 没有响应头（还在连接阶段）才按传输错误处理。
+        if wasTruncated, let http = task.response as? HTTPURLResponse {
+            let wallClock = Date().timeIntervalSince(start)
+            var response = APIResponse(http: http, body: buffer, metrics: metrics, wallClock: wallClock)
+            response.isBodyTruncated = true
+            response.bodyLimitBytes = options.maxResponseBytes
+            continuation.resume(returning: response)
+            return
+        }
 
         if let error {
             continuation.resume(throwing: RequestFailure.transport(error))

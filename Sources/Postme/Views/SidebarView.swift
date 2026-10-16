@@ -25,12 +25,19 @@ struct SidebarView: View {
         }
         .sheet(isPresented: $showRenameSheet) { renameSheet }
         .sheet(isPresented: $showNewFolderSheet) { newFolderSheet }
+        .confirmationDialog(
+            "当前请求有未保存的修改",
+            isPresented: $app.showDraftConflict,
+            titleVisibility: .visible
+        ) {
+            Button("保存并继续") { app.saveDraftAndContinue() }
+            Button("放弃修改", role: .destructive) { app.discardDraftAndContinue() }
+            Button("取消", role: .cancel) { app.cancelDraftConflict() }
+        } message: {
+            Text("切换后当前编辑内容会被替换。")
+        }
         .onChange(of: app.selectedNodeID) { _, newValue in
-            guard let id = newValue,
-                  let node = app.collections.findNode(id: id),
-                  !node.isFolder
-            else { return }
-            app.openSavedRequest(node)
+            app.handleSidebarSelection(newValue)
         }
         .onChange(of: app.focusSearchTick) { _, _ in
             searchFocused = true

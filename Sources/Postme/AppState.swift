@@ -52,6 +52,30 @@ final class AppState {
     /// 若 draft 来自某个已保存请求，记录其节点 id，用于「保存」覆盖。
     var editingNodeID: UUID?
 
+    /// 编辑器草稿的基线：最近一次「载入/保存」时的内容。
+    /// `draft != draftBaseline` 即表示有未保存修改——切换请求前必须问清楚，
+    /// 否则 `draft = saved.request` 会静默抹掉用户刚敲进去的内容。
+    private var draftBaseline: APIRequest = APIRequest()
+
+    /// 是否有未保存的修改。
+    var isDraftDirty: Bool { draft != draftBaseline }
+
+    /// 切换请求时若草稿是脏的，挂起待确认的动作。
+    enum PendingDraftAction: Equatable {
+        /// 切到某个已保存请求
+        case openNode(UUID)
+        /// 从某条历史恢复
+        case restoreHistory(HistoryEntry)
+        /// 新建请求
+        case newRequest(folderID: UUID?)
+    }
+
+    private(set) var pendingDraftAction: PendingDraftAction?
+    /// 需要用户先决定「保存 / 放弃 / 取消」。
+    var showDraftConflict: Bool = false
+    /// 「保存并继续」选了但当前草稿还没归属节点时，先走保存弹窗，保存完成后再执行挂起动作。
+    private var switchAfterSave = false
+
     var response: APIResponse?
     /// 响应体展示文本（已美化/截断），收到响应时算一次并缓存。
     private(set) var responseBodyText: String = ""
@@ -101,12 +125,18 @@ final class AppState {
 
     // MARK: - 初始化
 
-    init() {
-        let persistence = PersistenceService()
+    convenience init() {
+        self.init(persistence: PersistenceService())
+    }
+
+    /// 可注入持久化服务的初始化，供测试用独立目录构造实例。
+    init(persistence: PersistenceService) {
         let loaded = persistence.load()
         self.persistence = persistence
         self.workspace = loaded
         self.draft = loaded.draft ?? APIRequest()
+        // 上次退出时恢复的草稿就是基线：它是"已落盘的内容"，不算未保存修改。
+        self.draftBaseline = self.draft
 
         // 退出前强制落盘，避免防抖窗口内的改动丢失。
         NotificationCenter.default.addObserver(
@@ -173,12 +203,23 @@ final class AppState {
             responseTab = .body
             // 历史记录保留**未替换**的模板（含 {{var}}），便于复用且不落盘明文密钥
             recordHistory(for: draft, statusCode: result.statusCode, duration: result.timing.total, succeeded: result.isSuccess)
+        } catch RequestFailure.cancelled {
+            // 用户主动取消：不是失败。清掉在途状态即可，不报错、不记历史。
+            response = nil
+            responseBodyText = ""
+            errorMessage = nil
         } catch {
             response = nil
             responseBodyText = ""
             errorMessage = error.localizedDescription
             recordHistory(for: draft, statusCode: nil, duration: nil, succeeded: false)
         }
+    }
+
+    /// 取消在飞请求（发送按钮 / ⌘.）。
+    func cancelSend() {
+        guard isSending else { return }
+        executor().cancel()
     }
 
     private func recordHistory(for request: APIRequest, statusCode: Int?, duration: TimeInterval?, succeeded: Bool) {
@@ -226,32 +267,151 @@ final class AppState {
 
     // MARK: - 草稿操作
 
-    func newRequest(inFolder folderID: UUID? = nil) {
-        draft = APIRequest()
-        editingNodeID = nil
+    /// 切换到新草稿的唯一入口：负责脏检查、基线重置与落盘。
+    ///
+    /// **为什么必须集中**：原先 `openSavedRequest` / `newRequest` / `restoreFromHistory`
+    /// 各自直接写 `draft`，谁都没检查未保存修改，用户敲了一半再点侧栏就全丢了。
+    private func adoptDraft(_ request: APIRequest, editingNodeID: UUID?, selectedNodeID: UUID?) {
+        draft = request
+        draftBaseline = request
+        self.editingNodeID = editingNodeID
+        self.selectedNodeID = selectedNodeID
         clearResponse()
         requestTab = .params
-        selectedNodeID = nil
-        defaultSaveFolderID = folderID
+        persistDraft()
+    }
+
+    /// 把当前草稿写进 workspace 并防抖落盘。
+    /// 草稿此前只在退出时落盘，异常退出（崩溃 / 强杀）就会丢掉整个编辑中的请求。
+    func persistDraft() {
         save()
+    }
+
+    /// 需要用户先决定草稿去留时，记下待执行的动作并弹提示。
+    private func deferAction(_ action: PendingDraftAction, fallbackSelection: UUID?) {
+        // **已经在等用户决定时，不再接受新的挂起动作。**
+        //
+        // 下面回滚 selectedNodeID 会再触发一次侧栏的 onChange → openSavedRequest，
+        // 而草稿此刻仍是脏的，于是会第二次调用本函数。若不拦住，第二次会用
+        // "回滚后的节点"（也就是当前正在编辑的那个）覆盖掉用户真正点击的目标——
+        // 用户选「保存并继续 / 放弃修改」后会停在原地，永远到不了想去的节点。
+        // 这恰好是 D3 要消灭的那类"静默偏离用户意图"。
+        guard pendingDraftAction == nil else { return }
+
+        pendingDraftAction = action
+        showDraftConflict = true
+        // 侧栏的选中项已经被用户点了，先回滚到当前编辑的节点，避免高亮与编辑器不一致。
+        // 回滚触发的 onChange 由上面的守卫吞掉。
+        selectedNodeID = fallbackSelection
+    }
+
+    /// 侧栏选中项变化的**唯一入口**（`SidebarView.onChange` 调用）。
+    ///
+    /// 放在这里而不是视图里，是为了让"回滚选中项会再触发一次 onChange"这条真实链路
+    /// 可以被测试直接驱动——否则测试只能绕过 SwiftUI 直调 `openSavedRequest`，
+    /// 正是这一点让 B1 这类重入缺陷在单测里完全隐形。
+    func handleSidebarSelection(_ id: UUID?) {
+        guard let id,
+              let node = collections.findNode(id: id),
+              !node.isFolder
+        else { return }
+        openSavedRequest(node)
+    }
+
+    func newRequest(inFolder folderID: UUID? = nil) {
+        if isDraftDirty {
+            deferAction(.newRequest(folderID: folderID), fallbackSelection: editingNodeID)
+            return
+        }
+        defaultSaveFolderID = folderID
+        adoptDraft(APIRequest(), editingNodeID: nil, selectedNodeID: nil)
     }
 
     /// 打开一个已保存的请求到编辑器。
     func openSavedRequest(_ node: CollectionNode) {
         guard let saved = node.savedRequest else { return }
-        draft = saved.request
-        editingNodeID = node.id
-        clearResponse()
-        requestTab = .params
-        selectedNodeID = node.id
+        if isDraftDirty {
+            deferAction(.openNode(node.id), fallbackSelection: editingNodeID)
+            return
+        }
+        adoptDraft(saved.request, editingNodeID: node.id, selectedNodeID: node.id)
     }
 
     /// 从历史恢复请求到编辑器（作为副本，不绑定已保存节点）。
     func restoreFromHistory(_ entry: HistoryEntry) {
-        draft = entry.request
-        editingNodeID = nil
-        clearResponse()
-        requestTab = .params
+        if isDraftDirty {
+            deferAction(.restoreHistory(entry), fallbackSelection: editingNodeID)
+            return
+        }
+        adoptDraft(entry.request, editingNodeID: nil, selectedNodeID: nil)
+    }
+
+    // MARK: - 草稿冲突的处理
+
+    /// 冲突提示里的「保存并继续」。
+    ///
+    /// 已绑定节点的草稿直接覆盖保存；没有归属的草稿需要先命名，于是挂起动作会
+    /// 等保存弹窗提交后由 `commitSaveSheet` 继续执行。
+    func saveDraftAndContinue() {
+        guard let action = pendingDraftAction else {
+            showDraftConflict = false
+            return
+        }
+        showDraftConflict = false
+        pendingDraftAction = nil
+
+        if editingNodeID != nil {
+            overwriteCurrentRequest()
+            perform(action)
+        } else {
+            switchAfterSave = true
+            pendingDraftAction = action
+            saveSheetName = suggestedName()
+            saveSheetFolderID = defaultSaveFolderID
+            showSaveSheet = true
+        }
+    }
+
+    /// 冲突提示里的「放弃修改」。
+    func discardDraftAndContinue() {
+        guard let action = pendingDraftAction else {
+            showDraftConflict = false
+            return
+        }
+        showDraftConflict = false
+        pendingDraftAction = nil
+        perform(action)
+    }
+
+    /// 冲突提示里的「取消」：什么都不做，保持当前草稿与选中项。
+    func cancelDraftConflict() {
+        pendingDraftAction = nil
+        showDraftConflict = false
+        switchAfterSave = false
+    }
+
+    /// 保存弹窗被取消。
+    func cancelSaveSheet() {
+        showSaveSheet = false
+        switchAfterSave = false
+        pendingDraftAction = nil
+    }
+
+    /// 执行先前挂起的切换动作。
+    private func perform(_ action: PendingDraftAction) {
+        switch action {
+        case .newRequest(let folderID):
+            defaultSaveFolderID = folderID
+            adoptDraft(APIRequest(), editingNodeID: nil, selectedNodeID: nil)
+
+        case .openNode(let id):
+            if let node = workspace.collections.findNode(id: id), let saved = node.savedRequest {
+                adoptDraft(saved.request, editingNodeID: node.id, selectedNodeID: node.id)
+            }
+
+        case .restoreHistory(let entry):
+            adoptDraft(entry.request, editingNodeID: nil, selectedNodeID: nil)
+        }
     }
 
     /// 保存为新请求。
@@ -262,7 +422,10 @@ final class AppState {
         let node = CollectionNode.request(.init(name: finalName, request: request))
         workspace.collections.insert(node, intoFolder: folderID)
         editingNodeID = node.id
+        selectedNodeID = node.id
         draft = request
+        // 保存后草稿就是"已落盘内容"，基线随之推进。
+        draftBaseline = request
         save()
     }
 
@@ -280,7 +443,10 @@ final class AppState {
             updated.name = saved.name
         }
         guard workspace.collections.replaceSavedRequest(id: id, with: updated) else { return }
-        if editingNodeID == id { draft = updated }
+        if editingNodeID == id {
+            draft = updated
+            draftBaseline = updated
+        }
         save()
     }
 
@@ -348,6 +514,13 @@ final class AppState {
     func commitSaveSheet() {
         saveAsNewRequest(name: saveSheetName, intoFolder: saveSheetFolderID)
         showSaveSheet = false
+
+        // 「保存并继续」的路径：草稿已落盘，接着执行先前挂起的切换动作。
+        if switchAfterSave, let action = pendingDraftAction {
+            switchAfterSave = false
+            pendingDraftAction = nil
+            perform(action)
+        }
     }
 
     /// 根据 URL 推测一个默认名称。

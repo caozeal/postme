@@ -43,10 +43,32 @@ final class PersistenceService {
         if let workspace = try? decoder.decode(Workspace.self, from: data) {
             return workspace
         }
-        let backup = fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
-        try? FileManager.default.moveItem(at: fileURL, to: backup)
-        print("[postme] workspace.json 解析失败，已备份为 \(backup.lastPathComponent)，以空工作区启动")
+        let backup = Self.uniqueBackupURL(for: fileURL)
+        do {
+            try FileManager.default.moveItem(at: fileURL, to: backup)
+            print("[postme] workspace.json 解析失败，已备份为 \(backup.lastPathComponent)，以空工作区启动")
+        } catch {
+            // 备份失败时**绝不能**继续用空工作区覆盖原文件——那才是真正的静默丢数据。
+            // 退一步：把坏内容就地另存一份，仍失败则把原文件留在磁盘上不动。
+            print("[postme] workspace.json 解析失败，且备份失败（\(error)）；原文件保持不变")
+            try? data.write(to: backup, options: .atomic)
+        }
         return Workspace()
+    }
+
+    /// 生成不与现有文件冲突的备份路径。
+    ///
+    /// 原先用秒级时间戳：同一秒内两次判损坏时，第二次 `moveItem` 会因目标已存在而失败，
+    /// 且失败被 `try?` 吞掉——坏文件留在原地，随即被空工作区的保存覆盖，备份也没了。
+    nonisolated static func uniqueBackupURL(for fileURL: URL) -> URL {
+        let stamp = Int(Date().timeIntervalSince1970)
+        var candidate = fileURL.appendingPathExtension("corrupt-\(stamp)")
+        var suffix = 1
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = fileURL.appendingPathExtension("corrupt-\(stamp)-\(suffix)")
+            suffix += 1
+        }
+        return candidate
     }
 
     /// 防抖保存。

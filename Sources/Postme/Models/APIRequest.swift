@@ -34,6 +34,17 @@ struct KeyValueItem: Identifiable, Codable, Hashable {
         self.key = key
         self.value = value
     }
+
+    /// 容错解码：缺字段不使整份工作区作废（见 `TolerantDecoding.swift`）。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: c.tolerant(.id, UUID()),
+            isEnabled: c.tolerant(.isEnabled, true),
+            key: c.tolerant(.key, ""),
+            value: c.tolerant(.value, "")
+        )
+    }
 }
 
 /// 一次请求的完整描述。v1 中所有字段值在发送前由 VariableResolver 完成 {{var}} 替换。
@@ -84,5 +95,23 @@ struct APIRequest: Identifiable, Codable, Hashable {
         c.queryParams = queryParams.map { KeyValueItem(id: UUID(), isEnabled: $0.isEnabled, key: $0.key, value: $0.value) }
         c.formFields = formFields.map { KeyValueItem(id: UUID(), isEnabled: $0.isEnabled, key: $0.key, value: $0.value) }
         return c
+    }
+
+    /// 容错解码：字段级问题（缺失 / 类型不符 / 未知枚举）退回默认值，
+    /// 不让单个脏字段作废整份工作区。见 `TolerantDecoding.swift`。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: c.tolerant(.id, UUID()),
+            name: c.tolerant(.name, "未命名请求"),
+            method: c.tolerant(.method, .get),
+            url: c.tolerant(.url, ""),
+            headers: c.tolerant(.headers, []),
+            queryParams: c.tolerant(.queryParams, []),
+            bodyKind: c.tolerant(.bodyKind, .none),
+            bodyText: c.tolerant(.bodyText, ""),
+            rawContentType: c.tolerant(.rawContentType, "text/plain"),
+            formFields: c.tolerant(.formFields, [])
+        )
     }
 }

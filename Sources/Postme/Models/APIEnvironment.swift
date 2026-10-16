@@ -21,4 +21,14 @@ struct APIEnvironment: Identifiable, Codable, Hashable {
         }
         return map
     }
+
+    /// 容错解码（见 `TolerantDecoding.swift`）。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: c.tolerant(.id, UUID()),
+            name: c.tolerant(.name, "新环境"),
+            variables: c.tolerant(.variables, [])
+        )
+    }
 }

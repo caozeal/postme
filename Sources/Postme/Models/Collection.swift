@@ -15,6 +15,16 @@ enum CollectionNode: Identifiable, Codable, Hashable {
             self.name = name
             self.children = children
         }
+
+        /// 容错解码（见 `TolerantDecoding.swift`）。
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(
+                id: c.tolerant(.id, UUID()),
+                name: c.tolerant(.name, "未命名文件夹"),
+                children: c.tolerantLossyArray(.children)
+            )
+        }
     }
 
     struct SavedRequest: Codable, Hashable {
@@ -27,7 +37,24 @@ enum CollectionNode: Identifiable, Codable, Hashable {
             self.name = name
             self.request = request
         }
+
+        /// 容错解码（见 `TolerantDecoding.swift`）。
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let request = c.tolerant(.request, APIRequest())
+            self.init(
+                id: c.tolerant(.id, UUID()),
+                name: c.tolerant(.name, request.name),
+                request: request
+            )
+        }
     }
+
+    /// 节点解码交给编译器合成的实现：它按 `folder` / `request` 键分支，正确处理
+    /// Swift 为带关联值的枚举生成的 `{"folder":{"_0":…}}` 形状（手写解码极易在这里
+    /// 悄悄走偏——若用容错的 Folder 去解整个节点对象，缺键会全部取默认值而"成功"，
+    /// 每个节点都会变成空文件夹）。
+    /// 单个节点彻底解不出来时由父级的 `tolerantLossyArray` 丢弃，不影响其余节点。
 
     var id: UUID {
         switch self {

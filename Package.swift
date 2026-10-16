@@ -16,6 +16,14 @@ let package = Package(
                 // 代码结构已按 v6 准备(store 全部 @MainActor),后续可一行切换。
                 .swiftLanguageMode(.v5)
             ]
+        ),
+        .testTarget(
+            name: "PostmeTests",
+            dependencies: ["Postme"],
+            path: "Tests/PostmeTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
         )
     ]
 )
