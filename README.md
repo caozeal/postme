@@ -1,5 +1,7 @@
 # postme
 
+**English** · [简体中文](README.zh-CN.md)
+
 <img src="docs/app-icon.png" width="128" align="right" alt="postme icon">
 
 A **lightweight native macOS API client** — an alternative to ApiPost / Postman.
@@ -368,7 +370,7 @@ undo a fixed behavior. They are now part of `Tests/PostmeTests/` and run with `s
   That comparison script is a throwaway program (not in the repo); the same assertions are pinned in
   the repository by `CurlCodecTests`.
 - `swift build -c release`: zero warnings, zero errors
-- Localization: `swift test` runs **223 tests**. `LocalizationTests` asserts that both string tables
+- Localization: `swift test` runs **224 tests**. `LocalizationTests` asserts that both string tables
   cover every key, that format placeholders match between languages (including `%.1f`), that the
   English table contains no CJK characters, that a language change is observable (the mechanism
   behind menu-bar recomputation), that the choice round-trips to disk, that cached response text is
