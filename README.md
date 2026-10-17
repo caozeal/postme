@@ -319,3 +319,9 @@ Tests/PostmeTests/           197 项测试（含真实 socket 的响应上限/�
   导入导出文案同样只经过逻辑层测试，未经人工点击验证。
   cURL 导入面板同理：`CurlCodec` 与 `AppState.importCurlRequests` 有测试覆盖，
   但**面板本身的点击路径（菜单项 → 剪贴板预填 → 预览 → 导入 → 提示）未经人工点击验证**
+
+---
+
+## 许可
+
+[MIT](LICENSE) © 2026 caozeal
