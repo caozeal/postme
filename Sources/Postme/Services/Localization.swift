@@ -29,7 +29,6 @@ enum L10nKey: String, CaseIterable, Sendable {
     // MARK: - 侧栏
 
     case sidebarProjectsTitle
-    case sidebarNewProject
     case sidebarNewRequest
     case sidebarNewFolder
     case sidebarImportCurlCommand
@@ -316,7 +315,6 @@ enum L10nTable {
         .notesHeader: "需要注意：",
 
         .sidebarProjectsTitle: "项目",
-        .sidebarNewProject: "新建项目",
         .sidebarNewRequest: "新建请求",
         .sidebarNewFolder: "新建文件夹",
         .sidebarImportCurlCommand: "导入 cURL 命令…",
@@ -549,7 +547,6 @@ enum L10nTable {
         .notesHeader: "Notes:",
 
         .sidebarProjectsTitle: "Projects",
-        .sidebarNewProject: "New Project",
         .sidebarNewRequest: "New Request",
         .sidebarNewFolder: "New Folder",
         .sidebarImportCurlCommand: "Import cURL Command…",

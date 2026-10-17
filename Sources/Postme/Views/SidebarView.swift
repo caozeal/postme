@@ -79,7 +79,8 @@ struct SidebarView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Menu {
-                Button(app.t(.sidebarNewProject)) { beginNewProject() }
+                // 新建项目只放在项目切换菜单里：+ 菜单管「当前项目内」的新增，
+                // 项目是更高一层，混进来会让两个入口语义重叠。
                 Button(app.t(.sidebarNewRequest)) { app.newRequest() }
                 Button(app.t(.sidebarNewFolder)) { beginNewFolder(parentID: nil) }
                 Divider()

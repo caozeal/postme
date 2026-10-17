@@ -56,8 +56,9 @@ The cost is macOS-only; the payoff is an order-of-magnitude difference in memory
 
 ### Project management (ApiPost-style project layer)
 - **Project switcher** at the top of the sidebar: one project in focus, the tree shows only it
-- Create / rename / delete projects (deleting removes all folders and requests and cannot be undone;
-  at least one project is kept)
+- Create / rename / delete projects — all three live in the project switcher's menu, so the sidebar
+  `+` menu stays scoped to the current project (new request / new folder / import cURL). Deleting a
+  project removes all folders and requests and cannot be undone; at least one project is kept
 - Nested folders inside a project; rename and delete; promote a top-level folder to a project
 - **Save**: if the draft belongs to a saved request, `⌘ S` overwrites it in place (the ownership is
   persisted with the draft, so after a restart it still overwrites instead of creating a duplicate);
