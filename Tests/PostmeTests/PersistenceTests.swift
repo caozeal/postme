@@ -13,7 +13,7 @@ final class PersistenceTests: XCTestCase {
 
     func testWorkspaceCodableRoundTrip() throws {
         var ws = Workspace()
-        ws.collections = [.folder(.init(name: "A"))]
+        ws.projects = [Project(name: "P", children: [.folder(.init(name: "A"))])]
         ws.environments = [APIEnvironment(name: "prod", variables: [KeyValueItem(key: "baseUrl", value: "https://p")])]
         ws.activeEnvironmentID = ws.environments.first?.id
         ws.pushHistory(HistoryEntry(request: APIRequest(name: "h", method: .get, url: "u"), statusCode: 200, duration: 0.1, succeeded: true))
@@ -27,7 +27,7 @@ final class PersistenceTests: XCTestCase {
         let data = try encoder.encode(ws)
         let back = try decoder.decode(Workspace.self, from: data)
 
-        XCTAssertEqual(back.collections.count, 1)
+        XCTAssertEqual(back.projects.count, 1)
         XCTAssertEqual(back.environments.first?.variables.first?.value, "https://p")
         XCTAssertEqual(back.activeEnvironmentID, ws.activeEnvironmentID)
         XCTAssertEqual(back.history.count, 1)
@@ -61,22 +61,22 @@ final class PersistenceTests: XCTestCase {
             let service = PersistenceService(fileName: "workspace.json", directory: dir)
 
             let empty = service.load()
-            XCTAssertTrue(empty.collections.isEmpty)
+            XCTAssertTrue(empty.projects.isEmpty)
             XCTAssertTrue(empty.environments.isEmpty)
             XCTAssertNil(empty.draft)
 
             var ws = Workspace()
-            ws.collections = [.request(.init(
+            ws.projects = [Project(name: "P", children: [.request(.init(
                 name: "持久化请求",
                 request: APIRequest(name: "持久化请求", method: .post, url: "https://x/y")
-            ))]
+            ))])]
             ws.environments = [APIEnvironment(name: "e", variables: [KeyValueItem(key: "k", value: "v")])]
             ws.draft = APIRequest(name: "草稿2", url: "d2")
             service.saveNow(ws)
 
             // saveNow 必须同步落盘：返回后立即应能读到，不等待、不轮询。
             let loaded = service.load()
-            XCTAssertEqual(loaded.collections.first?.name, "持久化请求")
+            XCTAssertEqual(loaded.projects.first?.children.first?.name, "持久化请求")
             XCTAssertTrue(FileManager.default.fileExists(
                 atPath: dir.appendingPathComponent("workspace.json").path
             ))
@@ -96,7 +96,7 @@ final class PersistenceTests: XCTestCase {
                 .write(to: dir.appendingPathComponent("workspace.json"))
 
             let corrupt = service.load()
-            XCTAssertTrue(corrupt.collections.isEmpty)
+            XCTAssertTrue(corrupt.projects.isEmpty)
 
             let backups = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?
                 .filter { $0.contains("corrupt") } ?? []
@@ -163,7 +163,7 @@ final class PersistenceTests: XCTestCase {
             }
 
             let loaded = service.load()
-            XCTAssertTrue(loaded.collections.isEmpty, "载入失败仍返回空工作区")
+            XCTAssertTrue(loaded.projects.isEmpty, "载入失败仍返回空工作区")
 
             // 关键断言：原文件必须还在，且内容未被改写
             XCTAssertTrue(

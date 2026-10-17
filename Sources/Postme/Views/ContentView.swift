@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 主界面外壳：左侧集合树，右侧「请求编辑 / 响应」上下分栏，工具栏放环境切换。
+/// 主界面外壳：左侧项目切换器 + 目录树，右侧「请求编辑 / 响应」上下分栏，工具栏放环境切换。
 struct ContentView: View {
     @Environment(AppState.self) private var app
 
@@ -24,6 +24,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $app.showEnvironmentEditor) {
             EnvironmentEditor()
+        }
+        .sheet(isPresented: $app.showCurlImport) {
+            CurlImportSheet()
         }
         .alert(
             "postme",

@@ -72,8 +72,8 @@ final class DraftProtectionTests: XCTestCase {
         XCTAssertFalse(app.isDraftDirty)
 
         let two = app.editingNodeID!
-        let one = app.collections.first!.id
-        app.openSavedRequest(app.collections.first { $0.id == one }!)
+        let one = app.activeProject!.children.first!.id
+        app.openSavedRequest(app.activeProject!.children.first { $0.id == one }!)
         XCTAssertFalse(app.showDraftConflict)
         XCTAssertEqual(app.editingNodeID, one)
         _ = two
@@ -93,7 +93,7 @@ final class DraftProtectionTests: XCTestCase {
         XCTAssertTrue(app.isDraftDirty)
 
         // 点第一个请求 → 必须弹提示，且草稿不被替换
-        app.openSavedRequest(app.collections.first { $0.id == firstID }!)
+        app.openSavedRequest(app.activeProject!.children.first { $0.id == firstID }!)
         XCTAssertTrue(app.showDraftConflict)
         XCTAssertEqual(app.draft.url, "https://unsaved-work", "弹提示期间草稿必须原样保留")
         XCTAssertEqual(app.editingNodeID, secondID, "还没确认，不应切换归属")
@@ -108,7 +108,7 @@ final class DraftProtectionTests: XCTestCase {
         app.saveAsNewRequest(name: "two", intoFolder: nil)
 
         app.draft.url = "https://unsaved-work"
-        app.openSavedRequest(app.collections.first { $0.id == firstID }!)
+        app.openSavedRequest(app.activeProject!.children.first { $0.id == firstID }!)
         app.cancelDraftConflict()
 
         XCTAssertFalse(app.showDraftConflict)
@@ -125,7 +125,7 @@ final class DraftProtectionTests: XCTestCase {
         app.saveAsNewRequest(name: "two", intoFolder: nil)
 
         app.draft.url = "https://unsaved-work"
-        app.openSavedRequest(app.collections.first { $0.id == firstID }!)
+        app.openSavedRequest(app.activeProject!.children.first { $0.id == firstID }!)
         app.discardDraftAndContinue()
 
         XCTAssertFalse(app.showDraftConflict)
@@ -144,11 +144,11 @@ final class DraftProtectionTests: XCTestCase {
         let secondID = app.editingNodeID!
 
         app.draft.url = "https://saved-work"
-        app.openSavedRequest(app.collections.first { $0.id == firstID }!)
+        app.openSavedRequest(app.activeProject!.children.first { $0.id == firstID }!)
         app.saveDraftAndContinue()
 
         // 修改应落到原来的节点上
-        let secondNode = app.collections.first { $0.id == secondID }
+        let secondNode = app.activeProject!.children.first { $0.id == secondID }
         XCTAssertEqual(secondNode?.savedRequest?.request.url, "https://saved-work")
         // 然后才切到目标
         XCTAssertEqual(app.editingNodeID, firstID)
@@ -167,7 +167,7 @@ final class DraftProtectionTests: XCTestCase {
         app.draft.url = "https://brand-new"
         XCTAssertNil(app.editingNodeID)
 
-        app.openSavedRequest(app.collections.first { $0.id == firstID }!)
+        app.openSavedRequest(app.activeProject!.children.first { $0.id == firstID }!)
         app.saveDraftAndContinue()
 
         // 没有归属节点 → 必须先命名保存
@@ -180,7 +180,7 @@ final class DraftProtectionTests: XCTestCase {
         // 保存后再切到目标请求
         XCTAssertFalse(app.showSaveSheet)
         XCTAssertEqual(app.editingNodeID, firstID)
-        XCTAssertEqual(app.collections.filter { $0.name == "新请求" }.count, 1)
+        XCTAssertEqual(app.activeProject!.children.filter { $0.name == "新请求" }.count, 1)
     }
 
     func testCancelSaveSheetAbortsPendingSwitch() {
@@ -191,14 +191,14 @@ final class DraftProtectionTests: XCTestCase {
         app.newRequest()
         app.draft.url = "https://brand-new"
 
-        app.openSavedRequest(app.collections.first { $0.id == firstID }!)
+        app.openSavedRequest(app.activeProject!.children.first { $0.id == firstID }!)
         app.saveDraftAndContinue()
         app.cancelSaveSheet()
 
         // 用户放弃了整个动作：草稿留在编辑器里，没切走也没保存
         XCTAssertEqual(app.draft.url, "https://brand-new")
         XCTAssertFalse(app.showSaveSheet)
-        XCTAssertTrue(app.collections.allSatisfy { $0.name != "新请求" })
+        XCTAssertTrue(app.activeProject!.children.allSatisfy { $0.name != "新请求" })
     }
 
     // MARK: - 新建与历史恢复也受保护
@@ -377,7 +377,7 @@ final class DraftProtectionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         app.newFolder(name: "组", inFolder: nil)
-        let folderID = app.collections.first!.id
+        let folderID = app.activeProject!.children.first!.id
         simulateSelection(app, folderID)
         // 文件夹不是请求，不应触发任何草稿逻辑
         XCTAssertFalse(app.showDraftConflict)

@@ -50,6 +50,9 @@ final class AppState {
     var draft: APIRequest
 
     /// 若 draft 来自某个已保存请求，记录其节点 id，用于「保存」覆盖。
+    ///
+    /// `save()` 会把它同步到 `workspace.draftNodeID`：归属必须和草稿一起落盘，
+    /// 否则重启后草稿还在、归属丢了，⌘S 会把它当成新请求再存一份。
     var editingNodeID: UUID?
 
     /// 编辑器草稿的基线：最近一次「载入/保存」时的内容。
@@ -111,9 +114,21 @@ final class AppState {
         focusSearchTick += 1
     }
 
-    /// 「保存到集合」弹窗状态。
+    /// 「保存到项目」弹窗状态。
     var showSaveSheet: Bool = false
     var saveSheetName: String = ""
+    /// 保存目标项目。打开弹窗时默认当前项目。
+    var saveSheetProjectID: UUID? {
+        didSet {
+            // 换项目后，旧项目里的文件夹在新项目里不存在 → 目标会静默落空。
+            guard saveSheetProjectID != oldValue, let folder = saveSheetFolderID else { return }
+            if workspace.projects.first(where: { $0.id == saveSheetProjectID })?
+                .children.findNode(id: folder) == nil {
+                saveSheetFolderID = nil
+            }
+        }
+    }
+    /// 保存目标文件夹（属于 `saveSheetProjectID`；nil 表示项目根）。
     var saveSheetFolderID: UUID?
     /// 新建请求时的默认保存目标文件夹（右键「在此新建请求」用）。
     var defaultSaveFolderID: UUID?
@@ -148,22 +163,46 @@ final class AppState {
                 self?.saveImmediately()
             }
         }
+
+        // 「至少一个项目 + 当前项目有效」的生命周期不变量：
+        // 全新工作区、旧文件迁移出 0 个项目、activeProjectID 悬空，都在这里兜底。
+        // 只改内存不落盘——下一次 save() 会自然带上。
+        ensureActiveProject()
+
+        // 草稿归属随草稿一起恢复。不恢复的话，重启后编辑器里明明还是同一条请求，
+        // ⌘S 却当成新请求弹窗——每重启一次就多一条重复。
+        if loaded.draft != nil,
+           let id = loaded.draftNodeID,
+           activeProject?.children.findNode(id: id)?.savedRequest != nil {
+            editingNodeID = id
+            selectedNodeID = id
+        }
     }
 
     // MARK: - 便捷访问
 
-    var collections: [CollectionNode] { workspace.collections }
+    var projects: [Project] { workspace.projects }
     var history: [HistoryEntry] { workspace.history }
     var environments: [APIEnvironment] { workspace.environments }
+
+    /// 当前项目。由 `ensureActiveProject()` 保证非 nil（防御性 Optional）。
+    var activeProject: Project? {
+        workspace.projects.first { $0.id == workspace.activeProjectID }
+    }
+
+    /// 当前项目在数组中的下标（节点操作的写入口）。
+    private var activeProjectIndex: Int? {
+        workspace.projects.firstIndex(where: { $0.id == workspace.activeProjectID })
+    }
 
     var activeEnvironment: APIEnvironment? {
         guard let id = workspace.activeEnvironmentID else { return nil }
         return workspace.environments.first { $0.id == id }
     }
 
-    /// 搜索命中的请求（扁平列表）。
+    /// 搜索命中当前项目内的请求（扁平列表）。
     var searchResults: [CollectionNode] {
-        workspace.collections.requestsMatching(searchKeyword)
+        activeProject?.children.requestsMatching(searchKeyword) ?? []
     }
 
     var isSearching: Bool {
@@ -311,8 +350,9 @@ final class AppState {
     /// 可以被测试直接驱动——否则测试只能绕过 SwiftUI 直调 `openSavedRequest`，
     /// 正是这一点让 B1 这类重入缺陷在单测里完全隐形。
     func handleSidebarSelection(_ id: UUID?) {
+        // 侧栏只渲染当前项目的目录树，选中的节点按构造属于当前项目。
         guard let id,
-              let node = collections.findNode(id: id),
+              let node = activeProject?.children.findNode(id: id),
               !node.isFolder
         else { return }
         openSavedRequest(node)
@@ -360,15 +400,12 @@ final class AppState {
         showDraftConflict = false
         pendingDraftAction = nil
 
-        if editingNodeID != nil {
-            overwriteCurrentRequest()
+        if overwriteCurrentRequest() {
             perform(action)
         } else {
             switchAfterSave = true
             pendingDraftAction = action
-            saveSheetName = suggestedName()
-            saveSheetFolderID = defaultSaveFolderID
-            showSaveSheet = true
+            presentSaveSheet()
         }
     }
 
@@ -383,7 +420,9 @@ final class AppState {
         perform(action)
     }
 
-    /// 冲突提示里的「取消」：什么都不做，保持当前草稿与选中项。
+    /// 取消挂起的草稿冲突：冲突提示里的「取消」，也用于侧栏内容整体更换时
+    /// （切项目 / 删项目 / 导入）作废挂起动作——那些动作针对的节点刚被换掉，
+    /// 继续挂着只会让「保存并继续」打开一个用户看不见的节点。草稿本身不动。
     func cancelDraftConflict() {
         pendingDraftAction = nil
         showDraftConflict = false
@@ -405,7 +444,9 @@ final class AppState {
             adoptDraft(APIRequest(), editingNodeID: nil, selectedNodeID: nil)
 
         case .openNode(let id):
-            if let node = workspace.collections.findNode(id: id), let saved = node.savedRequest {
+            // 跨项目查找：挂起期间极端情况下项目可能已被删/换，找不到就安静不动，
+            // 绝不去打开一个用户看不见的节点。
+            if let node = workspace.projects.findNode(id: id), let saved = node.savedRequest {
                 adoptDraft(saved.request, editingNodeID: node.id, selectedNodeID: node.id)
             }
 
@@ -415,12 +456,24 @@ final class AppState {
     }
 
     /// 保存为新请求。
-    func saveAsNewRequest(name: String, intoFolder folderID: UUID?) {
+    ///
+    /// `projectID` 为 nil 时落到当前项目；指定其他项目时会把当前项目切过去——
+    /// 否则新请求在侧栏里根本看不见，`selectedNodeID` 还会悬空。
+    func saveAsNewRequest(name: String, intoProject projectID: UUID? = nil, intoFolder folderID: UUID?) {
+        let targetID = projectID.flatMap { id in
+            workspace.projects.contains { $0.id == id } ? id : nil
+        } ?? workspace.activeProjectID
+        guard let index = workspace.projects.firstIndex(where: { $0.id == targetID }) else { return }
+
         var request = draft
         let finalName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名请求" : name
         request.name = finalName
         let node = CollectionNode.request(.init(name: finalName, request: request))
-        workspace.collections.insert(node, intoFolder: folderID)
+
+        workspace.activeProjectID = targetID
+        // 换项目后，指向旧项目的保存目标 / 选中项都要作废，免得插进不存在的文件夹。
+        dropStaleNodeReferences()
+        insert(node, intoProject: index, intoFolder: folderID)
         editingNodeID = node.id
         selectedNodeID = node.id
         draft = request
@@ -429,40 +482,50 @@ final class AppState {
         save()
     }
 
-    /// 覆盖当前正编辑的已保存请求。
-    func overwriteCurrentRequest() {
-        guard let id = editingNodeID else { return }
-        overwriteSavedRequest(id: id, with: draft)
+    /// 覆盖当前正编辑的已保存请求。返回是否真的写入了（归属失效时为 false）。
+    @discardableResult
+    func overwriteCurrentRequest() -> Bool {
+        guard let id = editingNodeID else { return false }
+        return overwriteSavedRequest(id: id, with: draft)
     }
 
     /// 用给定请求覆盖指定的已保存节点（原地替换，保留位置与 id）。
-    func overwriteSavedRequest(id: UUID, with request: APIRequest) {
+    ///
+    /// 跨项目查找：编辑归属理论上总在当前项目里，但归属是持久化的，
+    /// 一旦它指向别的项目，只在当前项目里找会让 ⌘S 静默失效。
+    @discardableResult
+    func overwriteSavedRequest(id: UUID, with request: APIRequest) -> Bool {
+        guard let index = workspace.projects.firstIndex(where: {
+            $0.children.findNode(id: id)?.savedRequest != nil
+        }) else { return false }
         var updated = request
-        if let node = workspace.collections.findNode(id: id),
-           let saved = node.savedRequest {
+        if let saved = workspace.projects[index].children.findNode(id: id)?.savedRequest {
             updated.name = saved.name
         }
-        guard workspace.collections.replaceSavedRequest(id: id, with: updated) else { return }
+        guard workspace.projects[index].children.replaceSavedRequest(id: id, with: updated) else { return false }
         if editingNodeID == id {
             draft = updated
             draftBaseline = updated
         }
         save()
+        return true
     }
 
-    // MARK: - 集合操作
+    // MARK: - 目录操作（当前项目内）
 
     func newFolder(name: String, inFolder folderID: UUID?) {
         let finalName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新建文件夹" : name
         let folder = CollectionNode.folder(.init(name: finalName))
-        workspace.collections.insert(folder, intoFolder: folderID)
+        guard let index = activeProjectIndex else { return }
+        insert(folder, intoProject: index, intoFolder: folderID)
         save()
     }
 
     func renameNode(id: UUID, to newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard workspace.collections.renameNode(id: id, to: trimmed) else { return }
+        guard let index = activeProjectIndex,
+              workspace.projects[index].children.renameNode(id: id, to: trimmed) else { return }
         if editingNodeID == id {
             draft.name = trimmed
         }
@@ -470,13 +533,14 @@ final class AppState {
     }
 
     func deleteNode(id: UUID) {
-        guard workspace.collections.removeNode(id: id) else { return }
+        guard let index = activeProjectIndex,
+              workspace.projects[index].children.removeNode(id: id) else { return }
         // 被删的可能是「正在编辑请求」所在的文件夹。删除后若 editingNodeID 已不在树里，
         // 必须清掉——否则 ⌘S 会静默无效（overwriteCurrentRequest 找不到节点直接 return）。
-        if let editing = editingNodeID, workspace.collections.findNode(id: editing) == nil {
+        if let editing = editingNodeID, workspace.projects.findNode(id: editing) == nil {
             editingNodeID = nil
         }
-        if let selected = selectedNodeID, workspace.collections.findNode(id: selected) == nil {
+        if let selected = selectedNodeID, workspace.projects.findNode(id: selected) == nil {
             selectedNodeID = nil
         }
         save()
@@ -494,25 +558,38 @@ final class AppState {
 
     // MARK: - 保存动作（工具栏「保存」）
 
-    /// 可选的文件夹列表（含层级路径）。
-    var folderOptions: [(id: UUID, path: String)] {
-        workspace.collections.folderPaths()
+    /// 保存弹窗里所选项目的文件夹列表（含层级路径）。
+    var saveSheetFolderOptions: [(id: UUID, path: String)] {
+        let id = saveSheetProjectID ?? workspace.activeProjectID
+        return workspace.projects.first { $0.id == id }?.children.folderPaths() ?? []
     }
 
-    /// 点「保存」：已在集合中则原地覆盖，否则弹窗命名。
+    /// 点「保存」：已绑定当前项目中的节点则原地覆盖，否则弹窗命名。
+    ///
+    /// 归属失效（节点被删、或指向别的项目）时不能静默不动，也不能覆盖到别处：
+    /// 退回弹窗让用户明确落点。
     func beginSave() {
-        if editingNodeID != nil {
-            overwriteCurrentRequest()
-        } else {
-            saveSheetName = suggestedName()
-            saveSheetFolderID = defaultSaveFolderID
-            showSaveSheet = true
+        if editingNodeID != nil, overwriteCurrentRequest() {
+            return
         }
+        presentSaveSheet()
+    }
+
+    /// 打开保存弹窗，目标项目默认当前项目。
+    private func presentSaveSheet() {
+        saveSheetName = suggestedName()
+        saveSheetProjectID = workspace.activeProjectID
+        saveSheetFolderID = defaultSaveFolderID
+        showSaveSheet = true
     }
 
     /// 弹窗确认：保存为新请求。
     func commitSaveSheet() {
-        saveAsNewRequest(name: saveSheetName, intoFolder: saveSheetFolderID)
+        saveAsNewRequest(
+            name: saveSheetName,
+            intoProject: saveSheetProjectID,
+            intoFolder: saveSheetFolderID
+        )
         showSaveSheet = false
 
         // 「保存并继续」的路径：草稿已落盘，接着执行先前挂起的切换动作。
@@ -586,14 +663,19 @@ final class AppState {
     // MARK: - 导入 / 导出
 
     /// 导入 Postman / ApiPost 导出的 Collection v2.1。
+    ///
+    /// **每个集合成为一个同名项目**（集合 ≈ 项目）：不与现有内容混合，
+    /// 重复导入就是多个可删的项目，与导出侧（导出当前项目）对称。
     @discardableResult
     func importPostmanCollection(data: Data) throws -> PostmanCodec.ImportResult {
         let result = try PostmanCodec.decode(data)
-        // 包一层同名文件夹。两个作用:
-        // 1. 多次导入不同集合时，顶层不会混在一起无法区分；
-        // 2. 与导出侧对齐——导出时「顶层只有一个文件夹」会被当作集合本身，往返后结构不变。
-        let wrapper = CollectionNode.folder(.init(name: result.collectionName, children: result.nodes))
-        workspace.collections.append(wrapper)
+        // 导入会整体更换侧栏内容：挂起的草稿切换动作与陈旧的节点引用一并作废
+        // （否则「保存并继续」会去打开一个刚被替换掉的节点）。
+        cancelDraftConflict()
+        let project = Project(name: result.collectionName, children: result.nodes)
+        workspace.projects.append(project)
+        workspace.activeProjectID = project.id
+        dropStaleNodeReferences()
         if let environment = result.environment {
             workspace.environments.append(environment)
             if workspace.activeEnvironmentID == nil {
@@ -604,9 +686,184 @@ final class AppState {
         return result
     }
 
-    /// 导出全部集合为 Postman Collection v2.1。
+    // MARK: - cURL 导入
+
+    /// cURL 导入面板是否展示。
+    var showCurlImport: Bool = false
+
+    /// cURL 请求导入到哪里。
+    enum CurlImportTarget: Equatable {
+        /// 新建项目（名字由调用方给出，空则兜底）
+        case newProject(name: String)
+        /// 并入当前项目的根目录
+        case currentProject
+    }
+
+    /// 把解析好的 curl 请求落进工作区，返回实际导入的条数。
+    ///
+    /// 与 Postman 导入的差别：curl 命令没有"集合"这一层，所以既能新建项目，
+    /// 也能直接并进当前项目（前者对应「从一段命令起个新项目」，后者对应
+    /// 「往手头的项目里补一个请求」）。两条路径都要走同一套收尾：
+    /// 取消挂起的草稿冲突、清理悬空节点引用。
+    @discardableResult
+    func importCurlRequests(_ requests: [APIRequest], target: CurlImportTarget) -> Int {
+        guard !requests.isEmpty else { return 0 }
+
+        let nodes = requests.map { request -> CollectionNode in
+            let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            var stored = request
+            stored.name = name.isEmpty ? "cURL 请求" : name
+            return .request(.init(name: stored.name, request: stored))
+        }
+
+        switch target {
+        case .newProject(let name):
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let project = Project(name: trimmed.isEmpty ? "cURL 导入" : trimmed, children: nodes)
+            workspace.projects.append(project)
+            workspace.activeProjectID = project.id
+            // 只有换项目才会让侧栏内容整体更换，此时才需要取消挂起的草稿冲突
+            cancelDraftConflict()
+
+        case .currentProject:
+            guard let index = activeProjectIndex else { return 0 }
+            workspace.projects[index].children.append(contentsOf: nodes)
+        }
+
+        dropStaleNodeReferences()
+        save()
+        return nodes.count
+    }
+
+    /// 导出当前项目为 Postman Collection v2.1（其他项目不会被导出）。
     func postmanExportData() throws -> Data {
-        try PostmanCodec.encode(collections: workspace.collections, environment: activeEnvironment)
+        guard let project = activeProject else { throw PostmanCodec.CodecError.noProject }
+        return try PostmanCodec.encode(project: project, environment: activeEnvironment)
+    }
+
+    // MARK: - 项目操作
+
+    /// 保证「至少一个项目 + 当前项目有效」的不变量。
+    /// 在 `init` 调用；`deleteProject` 有「至少保留一个」的守卫，不变量不会被打穿。
+    private func ensureActiveProject() {
+        if workspace.projects.isEmpty {
+            let project = Project(name: "默认项目")
+            workspace.projects.append(project)
+            workspace.activeProjectID = project.id
+        } else if workspace.activeProjectID == nil
+            || !workspace.projects.contains(where: { $0.id == workspace.activeProjectID }) {
+            workspace.activeProjectID = workspace.projects.first?.id
+        }
+    }
+
+    /// 侧栏内容整体更换（切项目 / 删项目 / 导入）后，清掉指向「新当前项目里不存在」的瞬态引用。
+    ///
+    /// 不清的后果是静默失效：`editingNodeID` 悬空 → ⌘S 静默无效；
+    /// `defaultSaveFolderID` / `saveSheetFolderID` 悬空 → 保存弹窗把节点
+    /// 插进一个不存在的文件夹（`insert` 找不到目标只返回 false）。
+    private func dropStaleNodeReferences() {
+        if let editing = editingNodeID, activeProject?.children.findNode(id: editing) == nil {
+            editingNodeID = nil
+        }
+        if let selected = selectedNodeID, activeProject?.children.findNode(id: selected) == nil {
+            selectedNodeID = nil
+        }
+        if let folder = defaultSaveFolderID, activeProject?.children.findNode(id: folder) == nil {
+            defaultSaveFolderID = nil
+        }
+        // 弹窗的文件夹属于弹窗选中的项目，不是「当前项目」。
+        let sheetProjectID = saveSheetProjectID ?? workspace.activeProjectID
+        if let folder = saveSheetFolderID,
+           workspace.projects.first(where: { $0.id == sheetProjectID })?
+               .children.findNode(id: folder) == nil {
+            saveSheetFolderID = nil
+        }
+    }
+
+    /// 切换当前项目。侧栏内容随之整体更换，故清理瞬态引用并取消挂起的草稿冲突
+    /// （草稿本身不动——它留在编辑器里，只是不再绑定旧项目的节点）。
+    func selectProject(id: UUID) {
+        guard id != workspace.activeProjectID,
+              workspace.projects.contains(where: { $0.id == id }) else { return }
+        workspace.activeProjectID = id
+        dropStaleNodeReferences()
+        cancelDraftConflict()
+        save()
+    }
+
+    /// 新建项目并设为当前。空名兜底「新建项目」。
+    @discardableResult
+    func newProject(name: String) -> UUID {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let project = Project(name: trimmed.isEmpty ? "新建项目" : trimmed)
+        workspace.projects.append(project)
+        workspace.activeProjectID = project.id
+        dropStaleNodeReferences()
+        cancelDraftConflict()
+        save()
+        return project.id
+    }
+
+    func renameProject(id: UUID, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard workspace.projects.renameProject(id: id, to: trimmed) else { return }
+        save()
+    }
+
+    /// 删除项目（含其全部目录和请求）。
+    ///
+    /// 至少保留一个项目——「没有项目」会让新建/保存都失去落点，
+    /// 空态对调试工具没有意义；UI 层也会在只剩一个时禁用删除。
+    func deleteProject(id: UUID) {
+        guard workspace.projects.count > 1,
+              workspace.projects.removeProject(id: id) else { return }
+        if workspace.activeProjectID == id {
+            workspace.activeProjectID = workspace.projects.first?.id
+        }
+        // 正在编辑/选中的节点可能就在被删的项目里
+        if let editing = editingNodeID, workspace.projects.findNode(id: editing) == nil {
+            editingNodeID = nil
+        }
+        if let selected = selectedNodeID, workspace.projects.findNode(id: selected) == nil {
+            selectedNodeID = nil
+        }
+        if let folder = defaultSaveFolderID, workspace.projects.findNode(id: folder) == nil {
+            defaultSaveFolderID = nil
+        }
+        if let folder = saveSheetFolderID, workspace.projects.findNode(id: folder) == nil {
+            saveSheetFolderID = nil
+        }
+        cancelDraftConflict()
+        save()
+    }
+
+    /// 把当前项目的顶层文件夹提为独立项目（子节点原样成为新项目的 children）。
+    ///
+    /// 旧数据迁移后用户会想把原来的顶层文件夹整理成项目，这是唯一需要的方向；
+    /// 通用的跨项目移动 / 拖拽 v1 明确不做。
+    func promoteFolderToProject(id: UUID) {
+        guard let index = activeProjectIndex,
+              let folderIndex = workspace.projects[index].children.firstIndex(where: { $0.id == id }),
+              case .folder(let folder) = workspace.projects[index].children[folderIndex] else { return }
+        workspace.projects[index].children.remove(at: folderIndex)
+        let project = Project(name: folder.name, children: folder.children)
+        workspace.projects.append(project)
+        workspace.activeProjectID = project.id
+        dropStaleNodeReferences()
+        cancelDraftConflict()
+        save()
+    }
+
+    /// 向指定项目插入节点。`folderID` 为 nil 时追加到项目根。
+    ///
+    /// **兜底 append**：`insert` 找不到目标文件夹时只返回 false，
+    /// 忽略返回值会让节点被静默吞掉、而 `editingNodeID` 却指向这个不存在的节点。
+    private func insert(_ node: CollectionNode, intoProject index: Int, intoFolder folderID: UUID?) {
+        guard workspace.projects.indices.contains(index) else { return }
+        if !workspace.projects[index].children.insert(node, intoFolder: folderID) {
+            workspace.projects[index].children.append(node)
+        }
     }
 
     // MARK: - 设置
@@ -629,12 +886,14 @@ final class AppState {
     /// 记录当前草稿并防抖落盘。
     func save() {
         workspace.draft = draft
+        workspace.draftNodeID = editingNodeID
         persistence.scheduleSave(workspace)
     }
 
-    /// 立即落盘（退出前）。
+    /// 立即落盘(退出前)。
     func saveImmediately() {
         workspace.draft = draft
+        workspace.draftNodeID = editingNodeID
         persistence.saveNow(workspace)
     }
 }

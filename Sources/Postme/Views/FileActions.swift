@@ -17,7 +17,7 @@ enum FileActions {
         do {
             let data = try Data(contentsOf: url)
             let result = try app.importPostmanCollection(data: data)
-            var message = "已导入「\(result.collectionName)」，共 \(result.requestCount) 个请求。"
+            var message = "已导入为项目「\(result.collectionName)」，共 \(result.requestCount) 个请求。"
             if result.environment != nil {
                 message += "同时创建了对应的变量环境。"
             }
@@ -32,24 +32,35 @@ enum FileActions {
 
     @MainActor
     static func exportPostman(from app: AppState) {
-        guard !app.collections.isEmpty else {
-            app.alertMessage = .init(text: "当前没有可导出的集合。")
+        guard let project = app.activeProject else {
+            app.alertMessage = .init(text: "当前没有项目，没有可导出的内容。")
+            return
+        }
+        guard !project.children.isEmpty else {
+            app.alertMessage = .init(text: "当前项目「\(project.name)」还是空的，没有可导出的内容。")
             return
         }
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "postme-collection.json"
-        panel.message = "导出为 Postman Collection v2.1"
+        panel.nameFieldStringValue = Self.safeFileName(project.name) + ".json"
+        panel.message = "将当前项目「\(project.name)」导出为 Postman Collection v2.1（其他项目不会导出）"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
             let data = try app.postmanExportData()
             try data.write(to: url)
-            app.alertMessage = .init(text: "已导出到 \(url.lastPathComponent)")
+            app.alertMessage = .init(text: "已导出项目「\(project.name)」到 \(url.lastPathComponent)")
         } catch {
             app.alertMessage = .init(text: "导出失败：\(error.localizedDescription)")
         }
+    }
+
+    /// 项目名用作默认文件名：滤掉路径非法字符（macOS 文件名里 `/` 与 `:` 都不可用）。
+    private static func safeFileName(_ name: String) -> String {
+        let cleaned = name.replacingOccurrences(of: "/", with: "-")
+                           .replacingOccurrences(of: ":", with: "-")
+        return cleaned.isEmpty ? "postme-project" : cleaned
     }
 }

@@ -28,6 +28,11 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$ROOT/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 
+# 应用图标(由 scripts/render_icon.swift + iconutil 生成,已入库)
+if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
+    cp "$ROOT/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+fi
+
 # v1 无资源;若将来 SwiftPM 生成资源包,一并拷入,避免运行时找不到 Bundle.module
 if compgen -G "$BIN_PATH/${APP_NAME}_*.bundle" > /dev/null; then
     cp -R "$BIN_PATH"/${APP_NAME}_*.bundle "$APP_DIR/Contents/Resources/"

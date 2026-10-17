@@ -226,7 +226,7 @@ final class PostmanAuthAndToleranceTests: XCTestCase {
         var req = APIRequest(name: "r", method: .get, url: "https://x.dev/a")
         req.headers = [KeyValueItem(key: "Authorization", value: "Bearer RT")]
         let data = try PostmanCodec.encode(
-            collections: [.request(.init(name: "r", request: req))],
+            project: Project(name: "认证项目", children: [.request(.init(name: "r", request: req))]),
             environment: nil
         )
         let back = try PostmanCodec.decode(data)

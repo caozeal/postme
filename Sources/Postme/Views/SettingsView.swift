@@ -37,18 +37,18 @@ struct SettingsView: View {
                         .textSelection(.enabled)
                         .multilineTextAlignment(.trailing)
                 }
-                Text("集合、环境、历史与设置都保存在这个 JSON 文件里，可直接用 git 备份。")
+                Text("项目、环境、历史与设置都保存在这个 JSON 文件里，可直接用 git 备份。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
 
             Section("快捷键") {
                 shortcutRow("发送请求", "⌘ ↩")
-                shortcutRow("保存到集合", "⌘ S")
+                shortcutRow("保存到项目", "⌘ S")
                 shortcutRow("新建请求", "⌘ N")
                 shortcutRow("搜索请求", "⌘ F")
-                shortcutRow("导入集合", "⌘ ⇧ I")
-                shortcutRow("导出集合", "⌘ ⇧ E")
+                shortcutRow("导入为项目", "⌘ ⇧ I")
+                shortcutRow("导出项目", "⌘ ⇧ E")
             }
         }
         .formStyle(.grouped)

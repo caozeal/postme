@@ -36,15 +36,18 @@ struct PostmeApp: App {
 
                 Divider()
 
-                Button("导入集合(Postman / ApiPost)…") { FileActions.importPostman(into: app) }
+                Button("导入 cURL…") { app.showCurlImport = true }
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
+
+                Button("导入为项目(Postman / ApiPost)…") { FileActions.importPostman(into: app) }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
 
-                Button("导出集合为 Postman…") { FileActions.exportPostman(from: app) }
+                Button("导出项目为 Postman…") { FileActions.exportPostman(from: app) }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
             }
 
             CommandGroup(replacing: .saveItem) {
-                Button("保存到集合") { app.beginSave() }
+                Button("保存到项目") { app.beginSave() }
                     .keyboardShortcut("s", modifiers: .command)
             }
 

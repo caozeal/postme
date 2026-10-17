@@ -1,6 +1,6 @@
 import Foundation
 
-/// 集合树节点：文件夹或已保存的请求。
+/// 集合树节点（位于项目内）：文件夹或已保存的请求。
 enum CollectionNode: Identifiable, Codable, Hashable {
     case folder(Folder)
     case request(SavedRequest)

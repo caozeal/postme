@@ -11,11 +11,13 @@ enum PostmanCodec {
     enum CodecError: LocalizedError {
         case notACollection
         case empty
+        case noProject
 
         var errorDescription: String? {
             switch self {
             case .notACollection: return "该文件不是有效的 Postman Collection v2.x 格式"
             case .empty: return "集合中没有可导入的请求"
+            case .noProject: return "没有可导出的项目"
             }
         }
     }
@@ -467,28 +469,15 @@ enum PostmanCodec {
 
     // MARK: - 导出
 
-    /// 导出全部顶层节点为一个 Postman 集合。
+    /// 导出一个项目为 Postman Collection v2.1：**项目名即集合名，项目子节点即 item**。
     ///
-    /// 命名规则（目的是让「导出 → 导入」往返稳定，且多次导入不互相混淆）：
-    /// - 顶层**恰好只有一个文件夹**时，以该文件夹作为集合本身（名称为集合名，其子节点为 item）；
-    /// - 否则集合名用「postme 导出」，全部顶层节点作为 item。
-    ///
-    /// 导入侧会把每个集合包一层同名文件夹，因此两条路径互相对齐：
-    /// `export([folder(N,[...])]) → import → [folder(N,[...])]`，往返后结构不变。
-    static func encode(collections: [CollectionNode], environment: APIEnvironment?) throws -> Data {
-        let name: String
-        let items: [CollectionNode]
-        if collections.count == 1, case .folder(let folder) = collections[0] {
-            name = folder.name
-            items = folder.children
-        } else {
-            name = "postme 导出"
-            items = collections
-        }
-
+    /// 导入侧把每个集合建成同名项目（`AppState.importPostmanCollection`），
+    /// 因此「导出 → 导入」往返天然稳定：`project(N, items) → collection(N, items) → project(N, items)`。
+    /// 不再需要早期那套「顶层恰好一个文件夹时以它为集合」的启发式。
+    static func encode(project: Project, environment: APIEnvironment?) throws -> Data {
         let collection = Collection(
-            info: .init(name: name, schema: schemaURL),
-            item: items.map { convertOut($0) },
+            info: .init(name: project.name, schema: schemaURL),
+            item: project.children.map { convertOut($0) },
             variable: environment.map { env in
                 env.variables
                     .filter { $0.isEnabled && !$0.key.isEmpty }

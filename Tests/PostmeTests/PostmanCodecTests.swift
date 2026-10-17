@@ -151,7 +151,7 @@ final class PostmanCodecTests: XCTestCase {
         ]))]
 
         let data = try PostmanCodec.encode(
-            collections: nodes,
+            project: Project(name: "导出项目", children: nodes),
             environment: APIEnvironment(name: "env", variables: [KeyValueItem(key: "baseUrl", value: "https://api.demo.com")])
         )
         let text = String(data: data, encoding: .utf8) ?? ""
@@ -175,14 +175,15 @@ final class PostmanCodecTests: XCTestCase {
         ]))]
 
         let data = try PostmanCodec.encode(
-            collections: nodes,
+            project: Project(name: "导出项目", children: nodes),
             environment: APIEnvironment(name: "env", variables: [KeyValueItem(key: "baseUrl", value: "https://api.demo.com")])
         )
         let back = try PostmanCodec.decode(data)
 
-        XCTAssertEqual(back.collectionName, "分组")
+        XCTAssertEqual(back.collectionName, "导出项目")
         XCTAssertEqual(back.requestCount, 1)
-        let backReq = back.nodes.first?.savedRequest?.request
+        // 项目内的文件夹层级原样往返：项目 → 文件夹「分组」→ 请求
+        let backReq = back.nodes.first?.children?.first?.savedRequest?.request
         XCTAssertEqual(backReq?.method, .post)
         XCTAssertEqual(backReq?.url, "https://api.demo.com/things")
         XCTAssertEqual(backReq?.queryParams.count, 2)
@@ -196,7 +197,7 @@ final class PostmanCodecTests: XCTestCase {
         let rawReq = APIRequest(name: "xml", method: .post, url: "https://x/y",
                                 bodyKind: .rawText, bodyText: "<a/>", rawContentType: "application/xml")
         let data = try PostmanCodec.encode(
-            collections: [.request(.init(name: "xml", request: rawReq))],
+            project: Project(name: "xml 项目", children: [.request(.init(name: "xml", request: rawReq))]),
             environment: nil
         )
         let back = try PostmanCodec.decode(data)
@@ -205,28 +206,33 @@ final class PostmanCodecTests: XCTestCase {
         XCTAssertEqual(backReq?.bodyText, "<a/>")
     }
 
-    func testSingleTopLevelFolderBecomesCollectionName() throws {
-        let single: [CollectionNode] = [.folder(.init(name: "我的集合", children: [
+    func testExportUsesProjectNameAsCollectionName() throws {
+        // 项目即集合：集合名 = 项目名，item = 项目子节点。
+        // 导入侧把集合建成同名项目，因此往返结构稳定。
+        let single: [CollectionNode] = [.folder(.init(name: "子目录", children: [
             .request(.init(name: "r", request: APIRequest(name: "r", url: "https://x")))
         ]))]
-        let data = try PostmanCodec.encode(collections: single, environment: nil)
+        let data = try PostmanCodec.encode(
+            project: Project(name: "我的项目", children: single),
+            environment: nil
+        )
         let root = (try JSONSerialization.jsonObject(with: data)) as? [String: Any]
         let info = root?["info"] as? [String: Any]
-        XCTAssertEqual(info?["name"] as? String, "我的集合")
+        XCTAssertEqual(info?["name"] as? String, "我的项目")
 
         let back = try PostmanCodec.decode(data)
-        // 包一层同名文件夹是 AppState.importPostmanCollection 的职责，往返结构因此稳定。
-        let wrapped = CollectionNode.folder(.init(name: back.collectionName, children: back.nodes))
-        XCTAssertEqual(wrapped.name, "我的集合")
-        XCTAssertEqual(wrapped.children?.first?.name, "r")
-        XCTAssertTrue(wrapped.isFolder)
+        // 包一层同名文件夹是 AppState.importPostmanCollection 的职责（现在是建同名项目），往返结构因此稳定。
+        let project = Project(name: back.collectionName, children: back.nodes)
+        XCTAssertEqual(project.name, "我的项目")
+        XCTAssertEqual(project.children.first?.name, "子目录")
+        XCTAssertTrue(project.children.first?.isFolder ?? false)
     }
 
     func testExportEncodesPlusInQuery() throws {
         let plusReq = APIRequest(name: "p", url: "https://x/y",
                                  queryParams: [KeyValueItem(key: "k", value: "a+b")])
         let data = try PostmanCodec.encode(
-            collections: [.request(.init(name: "p", request: plusReq))],
+            project: Project(name: "p", children: [.request(.init(name: "p", request: plusReq))]),
             environment: nil
         )
         XCTAssertTrue((String(data: data, encoding: .utf8) ?? "").contains("a%2Bb"))
@@ -236,7 +242,7 @@ final class PostmanCodecTests: XCTestCase {
         let req = APIRequest(name: "p", url: "https://x/y?inline=1",
                              queryParams: [KeyValueItem(key: "k", value: "v")])
         let data = try PostmanCodec.encode(
-            collections: [.request(.init(name: "p", request: req))],
+            project: Project(name: "p", children: [.request(.init(name: "p", request: req))]),
             environment: nil
         )
         let root = (try JSONSerialization.jsonObject(with: data)) as? [String: Any]

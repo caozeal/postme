@@ -72,7 +72,7 @@ struct RequestEditorView: View {
         } label: {
             Label("保存", systemImage: "square.and.arrow.down")
         }
-        .help(app.editingNodeID != nil ? "覆盖保存到集合 (⌘S)" : "保存到集合 (⌘S)")
+        .help(app.editingNodeID != nil ? "覆盖保存到当前项目 (⌘S)" : "保存到当前项目 (⌘S)")
     }
 
     private var methodMenu: some View {
@@ -203,10 +203,21 @@ struct RequestEditorView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("保存到").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("保存到项目").font(.system(size: 11)).foregroundStyle(.secondary)
+                Picker("", selection: $app.saveSheetProjectID) {
+                    ForEach(app.projects) { project in
+                        Text(project.name).tag(UUID?.some(project.id))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 340)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("文件夹").font(.system(size: 11)).foregroundStyle(.secondary)
                 Picker("", selection: $app.saveSheetFolderID) {
-                    Text("根目录").tag(UUID?.none)
-                    ForEach(app.folderOptions, id: \.id) { option in
+                    Text("项目根目录").tag(UUID?.none)
+                    ForEach(app.saveSheetFolderOptions, id: \.id) { option in
                         Text(option.path).tag(UUID?.some(option.id))
                     }
                 }
@@ -325,7 +336,8 @@ private struct BodyEditor: View {
         case .none:
             emptyHint("该请求不带请求体。")
         case .json, .rawText:
-            CodeTextView(text: $draft.bodyText)
+            // 仅 JSON 模式着色：Raw Text 是任意文本，套 JSON 规则会误染。
+            CodeTextView(text: $draft.bodyText, highlightJSON: draft.bodyKind == .json)
         case .formURLEncoded, .multipart:
             VStack(spacing: 0) {
                 if draft.bodyKind == .multipart {
