@@ -3,8 +3,11 @@ import AppKit
 import Observation
 
 /// 请求编辑区的分页。
+///
+/// **声明顺序即界面上分段控件的顺序**（`CaseIterable` 的 `allCases` 按声明顺序），
+/// 所以 Headers 写在 Params 前面：调试时先看/改头，再看 query。
 enum RequestTab: String, CaseIterable, Identifiable {
-    case params, headers, body
+    case headers, params, body
     var id: String { rawValue }
 
     func title(_ l10n: Localizer) -> String {
