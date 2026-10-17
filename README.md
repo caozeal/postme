@@ -393,8 +393,14 @@ undo a fixed behavior. They are now part of `Tests/PostmeTests/` and run with `s
   likewise have logic-layer tests only, with no manual click-through. The same applies to the cURL
   import panel: `CurlCodec` and `AppState.importCurlRequests` are tested, but the **panel's click
   path (menu item → clipboard prefill → preview → import → alert) has not been exercised by hand**.
-  Language switching is covered by unit tests (string-table completeness, persistence, live
-  recomputation); the picker itself was not clicked through.
+  Language switching has both layers: unit tests for string-table completeness, persistence and
+  live recomputation, plus `GUILanguageRenderTests` — it renders the real Settings / request-editor /
+  sidebar views in real windows, captures the window pixels, and reads them back with Vision OCR,
+  asserting the visible text switches zh → en → zh on the **same** `AppState` instance (i.e. the
+  views actually redraw, not just that the table is right). That test needs screen-recording
+  permission and is therefore opt-in:
+  `POSTME_GUI_VERIFY=1 swift test --filter GUILanguageRenderTests`.
+  The picker itself was still not clicked by hand.
 
 ---
 
