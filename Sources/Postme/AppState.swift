@@ -6,11 +6,12 @@ import Observation
 enum RequestTab: String, CaseIterable, Identifiable {
     case params, headers, body
     var id: String { rawValue }
-    var title: String {
+
+    func title(_ l10n: Localizer) -> String {
         switch self {
-        case .params: return "Params"
-        case .headers: return "Headers"
-        case .body: return "Body"
+        case .params: return l10n(.requestTabParams)
+        case .headers: return l10n(.requestTabHeaders)
+        case .body: return l10n(.requestTabBody)
         }
     }
 }
@@ -19,11 +20,12 @@ enum RequestTab: String, CaseIterable, Identifiable {
 enum ResponseTab: String, CaseIterable, Identifiable {
     case body, headers, timing
     var id: String { rawValue }
-    var title: String {
+
+    func title(_ l10n: Localizer) -> String {
         switch self {
-        case .body: return "Body"
-        case .headers: return "Headers"
-        case .timing: return "耗时"
+        case .body: return l10n(.responseTabBody)
+        case .headers: return l10n(.responseTabHeaders)
+        case .timing: return l10n(.responseTabTiming)
         }
     }
 }
@@ -145,8 +147,14 @@ final class AppState {
     }
 
     /// 可注入持久化服务的初始化，供测试用独立目录构造实例。
-    init(persistence: PersistenceService) {
-        let loaded = persistence.load()
+    ///
+    /// `languageOverride` 只在测试里用：在 `ensureActiveProject()` **之前**写进 settings，
+    /// 让断言中文默认名的用例不依赖宿主系统语言。生产路径传 nil，行为不变。
+    init(persistence: PersistenceService, languageOverride: AppLanguage? = nil) {
+        var loaded = persistence.load()
+        if let languageOverride {
+            loaded.settings.language = languageOverride
+        }
         self.persistence = persistence
         self.workspace = loaded
         self.draft = loaded.draft ?? APIRequest()
@@ -177,6 +185,32 @@ final class AppState {
             editingNodeID = id
             selectedNodeID = id
         }
+    }
+
+    // MARK: - 语言
+
+    /// 当前生效语言：settings 里选了就用它，没选（nil）跟随系统。
+    var effectiveLanguage: AppLanguage { workspace.settings.language ?? .systemDefault }
+
+    /// 当前语言的取词器。视图一律 `app.t(.key)`，服务层接收 `Localizer`。
+    var t: Localizer { Localizer(language: effectiveLanguage) }
+
+    /// 切换界面语言（nil = 跟随系统）。
+    ///
+    /// **为什么立即落盘**：语言是用户显式选择，重启后必须保持；防抖窗口内的崩溃
+    /// 不该把它丢掉。
+    ///
+    /// **为什么重算 `responseBodyText`**：它是收到响应时算好的字符串，里面含截断说明；
+    /// 不重算的话切到英文后那段说明仍是中文。
+    ///
+    /// **为什么清空 `errorMessage` / `alertMessage`**：二者是已生成的字符串，无法就地重译；
+    /// 留着旧语言的文本比清掉更误导。
+    func setLanguage(_ language: AppLanguage?) {
+        workspace.settings.language = language
+        refreshResponseBodyText()
+        errorMessage = nil
+        alertMessage = nil
+        saveImmediately()
     }
 
     // MARK: - 便捷访问
@@ -238,7 +272,7 @@ final class AppState {
         do {
             let result = try await executor().send(outgoing)
             response = result
-            responseBodyText = result.displayBodyText()
+            refreshResponseBodyText()
             responseTab = .body
             // 历史记录保留**未替换**的模板（含 {{var}}），便于复用且不落盘明文密钥
             recordHistory(for: draft, statusCode: result.statusCode, duration: result.timing.total, succeeded: result.isSuccess)
@@ -250,9 +284,26 @@ final class AppState {
         } catch {
             response = nil
             responseBodyText = ""
-            errorMessage = error.localizedDescription
+            errorMessage = localizedErrorMessage(for: error)
             recordHistory(for: draft, statusCode: nil, duration: nil, succeeded: false)
         }
+    }
+
+    /// 已知错误按当前语言取文案；未知错误保留系统的 `localizedDescription`
+    /// （那是系统语言，硬翻成应用语言反而更怪）。
+    private func localizedErrorMessage(for error: Error) -> String {
+        if let failure = error as? RequestFailure {
+            return failure.message(t)
+        }
+        return error.localizedDescription
+    }
+
+    /// 按当前语言重算并缓存响应体展示文本。
+    ///
+    /// `send()` 收到响应后调用；`setLanguage` 切换语言后也要调用——
+    /// 缓存的是成品字符串，含截断说明，不重算就会残留旧语言。
+    private func refreshResponseBodyText() {
+        responseBodyText = response?.displayBodyText(l10n: t) ?? ""
     }
 
     /// 取消在飞请求（发送按钮 / ⌘.）。
@@ -275,14 +326,26 @@ final class AppState {
         save()
     }
 
-    private func requestNameForHistory(_ request: APIRequest) -> String {
+    /// 内部可见：与 `suggestedName()` 同构，测试成对覆盖。
+    func requestNameForHistory(_ request: APIRequest) -> String {
         let trimmed = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty, trimmed != "未命名请求" { return trimmed }
+        if !trimmed.isEmpty, !Self.isPlaceholderRequestName(trimmed) { return trimmed }
         // 用 URL 的最后一段兜底命名
         if let url = URL(string: request.url), !url.lastPathComponent.isEmpty {
             return url.lastPathComponent
         }
-        return request.url.isEmpty ? "未命名请求" : request.url
+        return request.url.isEmpty ? t(.untitledRequest) : request.url
+    }
+
+    /// 名字是否是「未命名请求」这一类的占位名。
+    ///
+    /// **必须两种语言都认**：默认名是创建时按当时语言落盘的，用户切到英文后，
+    /// 中文界面创建的草稿仍叫「未命名请求」。只认当前语言的字面量，会把占位名当成
+    /// 用户起的名字，历史里就出现一堆「未命名请求」而不回退到 URL。
+    static func isPlaceholderRequestName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed == Localizer.zhHans(.untitledRequest)
+            || trimmed == Localizer.en(.untitledRequest)
     }
 
     func clearResponse() {
@@ -466,7 +529,7 @@ final class AppState {
         guard let index = workspace.projects.firstIndex(where: { $0.id == targetID }) else { return }
 
         var request = draft
-        let finalName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名请求" : name
+        let finalName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? t(.untitledRequest) : name
         request.name = finalName
         let node = CollectionNode.request(.init(name: finalName, request: request))
 
@@ -514,7 +577,7 @@ final class AppState {
     // MARK: - 目录操作（当前项目内）
 
     func newFolder(name: String, inFolder folderID: UUID?) {
-        let finalName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新建文件夹" : name
+        let finalName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? t(.sidebarNewFolder) : name
         let folder = CollectionNode.folder(.init(name: finalName))
         guard let index = activeProjectIndex else { return }
         insert(folder, intoProject: index, intoFolder: folderID)
@@ -600,14 +663,15 @@ final class AppState {
         }
     }
 
-    /// 根据 URL 推测一个默认名称。
-    private func suggestedName() -> String {
+    /// 根据 URL 推测一个默认名称。占位名判定与 `requestNameForHistory` 同构（双语）。
+    /// 内部可见：占位名判定是语义陷阱，测试直接覆盖（见 LocalizationTests 第 8 项）。
+    func suggestedName() -> String {
         let trimmed = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty, trimmed != "未命名请求" { return trimmed }
+        if !trimmed.isEmpty, !Self.isPlaceholderRequestName(trimmed) { return trimmed }
         if let url = URL(string: draft.url), !url.lastPathComponent.isEmpty {
             return url.lastPathComponent
         }
-        return "未命名请求"
+        return t(.untitledRequest)
     }
 
     // MARK: - 环境操作
@@ -625,8 +689,8 @@ final class AppState {
     }
 
     @discardableResult
-    func addEnvironment(name: String = "新环境") -> UUID {
-        let environment = APIEnvironment(name: name)
+    func addEnvironment(name: String? = nil) -> UUID {
+        let environment = APIEnvironment(name: name ?? t(.newEnvironmentDefaultName))
         workspace.environments.append(environment)
         if workspace.activeEnvironmentID == nil {
             workspace.activeEnvironmentID = environment.id
@@ -668,7 +732,7 @@ final class AppState {
     /// 重复导入就是多个可删的项目，与导出侧（导出当前项目）对称。
     @discardableResult
     func importPostmanCollection(data: Data) throws -> PostmanCodec.ImportResult {
-        let result = try PostmanCodec.decode(data)
+        let result = try PostmanCodec.decode(data, l10n: t)
         // 导入会整体更换侧栏内容：挂起的草稿切换动作与陈旧的节点引用一并作废
         // （否则「保存并继续」会去打开一个刚被替换掉的节点）。
         cancelDraftConflict()
@@ -712,14 +776,14 @@ final class AppState {
         let nodes = requests.map { request -> CollectionNode in
             let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
             var stored = request
-            stored.name = name.isEmpty ? "cURL 请求" : name
+            stored.name = name.isEmpty ? t(.curlRequestDefaultName) : name
             return .request(.init(name: stored.name, request: stored))
         }
 
         switch target {
         case .newProject(let name):
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            let project = Project(name: trimmed.isEmpty ? "cURL 导入" : trimmed, children: nodes)
+            let project = Project(name: trimmed.isEmpty ? t(.curlImportDefaultName) : trimmed, children: nodes)
             workspace.projects.append(project)
             workspace.activeProjectID = project.id
             // 只有换项目才会让侧栏内容整体更换，此时才需要取消挂起的草稿冲突
@@ -747,7 +811,7 @@ final class AppState {
     /// 在 `init` 调用；`deleteProject` 有「至少保留一个」的守卫，不变量不会被打穿。
     private func ensureActiveProject() {
         if workspace.projects.isEmpty {
-            let project = Project(name: "默认项目")
+            let project = Project(name: t(.defaultProjectName))
             workspace.projects.append(project)
             workspace.activeProjectID = project.id
         } else if workspace.activeProjectID == nil
@@ -795,7 +859,7 @@ final class AppState {
     @discardableResult
     func newProject(name: String) -> UUID {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let project = Project(name: trimmed.isEmpty ? "新建项目" : trimmed)
+        let project = Project(name: trimmed.isEmpty ? t(.newProjectDefaultName) : trimmed)
         workspace.projects.append(project)
         workspace.activeProjectID = project.id
         dropStaleNodeReferences()

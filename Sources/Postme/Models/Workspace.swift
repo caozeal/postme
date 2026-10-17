@@ -5,11 +5,22 @@ struct AppSettings: Codable, Hashable {
     var timeout: TimeInterval
     var followRedirects: Bool
     var allowInsecureTLS: Bool
+    /// 界面语言。`nil` = 跟随系统。
+    ///
+    /// 容错解码：缺键或未知值都得到 `nil`（回到跟随系统），不让整份工作区作废——
+    /// 手改过的 `language` 值不该把用户的项目和环境一起弄丢。
+    var language: AppLanguage?
 
-    init(timeout: TimeInterval = 30, followRedirects: Bool = true, allowInsecureTLS: Bool = false) {
+    init(
+        timeout: TimeInterval = 30,
+        followRedirects: Bool = true,
+        allowInsecureTLS: Bool = false,
+        language: AppLanguage? = nil
+    ) {
         self.timeout = timeout
         self.followRedirects = followRedirects
         self.allowInsecureTLS = allowInsecureTLS
+        self.language = language
     }
 
     /// 容错解码（见 `TolerantDecoding.swift`）。旧版本文件没有 settings 键时
@@ -19,7 +30,8 @@ struct AppSettings: Codable, Hashable {
         self.init(
             timeout: c.tolerant(.timeout, 30),
             followRedirects: c.tolerant(.followRedirects, true),
-            allowInsecureTLS: c.tolerant(.allowInsecureTLS, false)
+            allowInsecureTLS: c.tolerant(.allowInsecureTLS, false),
+            language: c.tolerantOptional(.language)
         )
     }
 

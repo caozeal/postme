@@ -13,7 +13,7 @@ final class ProjectLevelTests: XCTestCase {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("postme-project-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir))
+        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir), languageOverride: .zhHans)
         return (app, dir)
     }
 

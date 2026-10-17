@@ -29,10 +29,10 @@ struct EnvironmentEditor: View {
 
     private var header: some View {
         HStack {
-            Text("环境与变量")
+            Text(app.t(.environmentsTitle))
                 .font(.headline)
             Spacer()
-            Button("完成") { dismiss() }
+            Button(app.t(.doneButton)) { dismiss() }
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 16)
@@ -54,8 +54,8 @@ struct EnvironmentEditor: View {
                     }
                     .tag(environment.id)
                     .contextMenu {
-                        Button("设为当前环境") { app.selectEnvironment(id: environment.id) }
-                        Button("删除", role: .destructive) {
+                        Button(app.t(.setAsActiveEnvironment)) { app.selectEnvironment(id: environment.id) }
+                        Button(app.t(.deleteButton), role: .destructive) {
                             app.deleteEnvironment(id: environment.id)
                             if selectedID == environment.id { selectedID = app.environments.first?.id }
                         }
@@ -69,7 +69,7 @@ struct EnvironmentEditor: View {
                 let id = app.addEnvironment()
                 selectedID = id
             } label: {
-                Label("新建环境", systemImage: "plus")
+                Label(app.t(.newEnvironment), systemImage: "plus")
                     .font(.system(size: 12))
             }
             .buttonStyle(.borderless)
@@ -84,19 +84,19 @@ struct EnvironmentEditor: View {
             let environment = app.bindingForEnvironment(id: id)
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 10) {
-                    Text("名称")
+                    Text(app.t(.nameLabel))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                    TextField("环境名", text: environment.name)
+                    TextField(app.t(.environmentNamePlaceholder), text: environment.name)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 220)
                     Spacer()
                     if app.workspace.activeEnvironmentID == id {
-                        Label("当前环境", systemImage: "checkmark.circle.fill")
+                        Label(app.t(.currentEnvironment), systemImage: "checkmark.circle.fill")
                             .font(.system(size: 11))
                             .foregroundStyle(Color.accentColor)
                     } else {
-                        Button("设为当前环境") { app.selectEnvironment(id: id) }
+                        Button(app.t(.setAsActiveEnvironment)) { app.selectEnvironment(id: id) }
                             .font(.system(size: 11))
                     }
                 }
@@ -107,8 +107,8 @@ struct EnvironmentEditor: View {
 
                 KeyValueEditor(
                     items: environment.variables,
-                    keyPlaceholder: "变量名（不含 {{ }}）",
-                    valuePlaceholder: "变量值"
+                    keyPlaceholder: app.t(.envKeyPlaceholder),
+                    valuePlaceholder: app.t(.envValuePlaceholder)
                 )
 
                 Divider()
@@ -117,7 +117,7 @@ struct EnvironmentEditor: View {
         } else {
             VStack {
                 Spacer()
-                Text(app.environments.isEmpty ? "还没有环境，点左下角新建" : "选择一个环境")
+                Text(app.environments.isEmpty ? app.t(.noEnvironmentsHint) : app.t(.selectEnvironmentHint))
                     .foregroundStyle(.secondary)
                 Spacer()
             }
@@ -127,7 +127,7 @@ struct EnvironmentEditor: View {
 
     private var builtinHint: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("内置动态变量（无需定义）")
+            Text(app.t(.builtinVariablesHint))
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text("{{$timestamp}}  {{$isoTimestamp}}  {{$uuid}}  {{$randomInt}}")

@@ -19,20 +19,20 @@ struct CurlImportSheet: View {
 
         var id: String { rawValue }
 
-        var title: String {
+        func title(_ l10n: Localizer) -> String {
             switch self {
-            case .newProject: return "新建项目"
-            case .currentProject: return "当前项目"
+            case .newProject: return l10n(.curlTargetNewProject)
+            case .currentProject: return l10n(.curlTargetCurrentProject)
             }
         }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("导入 cURL")
+            Text(app.t(.curlImportTitle))
                 .font(.headline)
 
-            Text("支持浏览器 / Postman 的 Copy as cURL，以及终端里复制的命令；多条命令会各自导入成一个请求。")
+            Text(app.t(.curlImportHelp))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
@@ -70,7 +70,7 @@ struct CurlImportSheet: View {
     private var parsed: Result<CurlCodec.ImportResult, Error>? {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         do {
-            return .success(try CurlCodec.decode(text))
+            return .success(try CurlCodec.decode(text, l10n: app.t))
         } catch {
             return .failure(error)
         }
@@ -85,7 +85,7 @@ struct CurlImportSheet: View {
     private var status: some View {
         switch parsed {
         case .none:
-            Text("等待粘贴命令")
+            Text(app.t(.curlWaiting))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
@@ -93,13 +93,13 @@ struct CurlImportSheet: View {
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text(error.localizedDescription)
+                Text(localizedMessage(for: error))
                     .font(.system(size: 11))
             }
 
         case .success(let result):
             VStack(alignment: .leading, spacing: 4) {
-                Text("解析出 \(result.requests.count) 个请求：")
+                Text(app.t(.curlParsedCount, result.requests.count))
                     .font(.system(size: 11, weight: .semibold))
                 ForEach(Array(result.requests.prefix(5).enumerated()), id: \.offset) { _, request in
                     Text(summary(of: request))
@@ -108,7 +108,7 @@ struct CurlImportSheet: View {
                         .lineLimit(1)
                 }
                 if result.requests.count > 5 {
-                    Text("…还有 \(result.requests.count - 5) 个")
+                    Text(app.t(.curlMoreCount, result.requests.count - 5))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -118,13 +118,13 @@ struct CurlImportSheet: View {
 
     private func summary(of request: APIRequest) -> String {
         var parts = [request.method.rawValue, request.url]
-        if !request.headers.isEmpty { parts.append("\(request.headers.count) 个头") }
+        if !request.headers.isEmpty { parts.append(app.t(.curlSummaryHeaders, request.headers.count)) }
         switch request.bodyKind {
         case .none: break
-        case .json: parts.append("JSON 正文")
-        case .rawText: parts.append("文本正文")
-        case .formURLEncoded: parts.append("\(request.formFields.count) 个表单字段")
-        case .multipart: parts.append("\(request.formFields.count) 个 multipart 字段")
+        case .json: parts.append(app.t(.curlSummaryJSONBody))
+        case .rawText: parts.append(app.t(.curlSummaryTextBody))
+        case .formURLEncoded: parts.append(app.t(.curlSummaryFormFields, request.formFields.count))
+        case .multipart: parts.append(app.t(.curlSummaryMultipartFields, request.formFields.count))
         }
         return parts.joined(separator: "  ·  ")
     }
@@ -133,9 +133,9 @@ struct CurlImportSheet: View {
 
     private var footer: some View {
         HStack {
-            Picker("导入到", selection: $target) {
+            Picker(app.t(.curlImportTo), selection: $target) {
                 ForEach(Target.allCases) { option in
-                    Text(option.title).tag(option)
+                    Text(option.title(app.t)).tag(option)
                 }
             }
             .pickerStyle(.segmented)
@@ -144,8 +144,8 @@ struct CurlImportSheet: View {
 
             Spacer()
 
-            Button("取消") { dismiss() }
-            Button("导入") { performImport() }
+            Button(app.t(.cancelButton)) { dismiss() }
+            Button(app.t(.importButton)) { performImport() }
                 .keyboardShortcut(.defaultAction)
                 .disabled(requests.isEmpty)
         }
@@ -156,29 +156,42 @@ struct CurlImportSheet: View {
 
         let target: AppState.CurlImportTarget = self.target == .currentProject
             ? .currentProject
-            : .newProject(name: Self.defaultProjectName(for: result.requests))
+            : .newProject(name: defaultProjectName(for: result.requests))
 
         let imported = app.importCurlRequests(result.requests, target: target)
         dismiss()
 
-        var message = "已导入 \(imported) 个请求"
+        var message: String
         switch target {
-        case .newProject(let name): message += "，新项目「\(name)」。"
-        case .currentProject: message += " 到当前项目「\(app.activeProject?.name ?? "")」。"
+        case .newProject(let name):
+            message = app.t(.alertImportedIntoNewProject, imported, name)
+        case .currentProject:
+            message = app.t(.alertImportedIntoCurrentProject, imported, app.activeProject?.name ?? "")
         }
         if !result.warnings.isEmpty {
-            message += "\n\n需要注意：\n" + result.warnings.map { "• \($0)" }.joined(separator: "\n")
+            message += "\n\n" + app.t(.notesHeader) + "\n" + result.warnings.map { "• \($0)" }.joined(separator: "\n")
         }
         app.alertMessage = .init(text: message)
     }
 
     /// 新项目用首个请求的主机名命名，比「cURL 导入」有信息量。
-    private static func defaultProjectName(for requests: [APIRequest]) -> String {
+    private func defaultProjectName(for requests: [APIRequest]) -> String {
         guard let first = requests.first,
               let host = URL(string: first.url)?.host,
               !host.isEmpty
-        else { return "cURL 导入" }
+        else { return app.t(.curlImportDefaultName) }
         return host
+    }
+
+    /// 解析错误的展示文本。
+    ///
+    /// 已知的 `CodecError` 走 `message(_:)` 按当前语言取文案；
+    /// 未知错误保留系统的 `localizedDescription`（那是系统语言）。
+    private func localizedMessage(for error: Error) -> String {
+        if let codecError = error as? CurlCodec.CodecError {
+            return codecError.message(app.t)
+        }
+        return error.localizedDescription
     }
 
     /// 打开面板时若剪贴板里就是 curl 命令，直接预填——这是最高频的用法。

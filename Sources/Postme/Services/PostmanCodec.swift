@@ -8,16 +8,21 @@ enum PostmanCodec {
 
     static let schemaURL = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 
-    enum CodecError: LocalizedError {
+    /// 解码阶段（拿不到取词器）写入的占位名，出口处替换成当前语言。
+    private static let unnamedPlaceholder = "\u{0}unnamed-collection"
+    private static let unnamedItemPlaceholder = "\u{0}unnamed-item"
+
+    /// 导入 / 导出失败原因。文案由调用方按当前语言取（见 `CurlCodec.CodecError` 的说明）。
+    enum CodecError: Error {
         case notACollection
         case empty
         case noProject
 
-        var errorDescription: String? {
+        func message(_ l10n: Localizer) -> String {
             switch self {
-            case .notACollection: return "该文件不是有效的 Postman Collection v2.x 格式"
-            case .empty: return "集合中没有可导入的请求"
-            case .noProject: return "没有可导出的项目"
+            case .notACollection: return l10n(.postmanErrorNotACollection)
+            case .empty: return l10n(.postmanErrorEmpty)
+            case .noProject: return l10n(.postmanErrorNoProject)
             }
         }
     }
@@ -41,7 +46,8 @@ enum PostmanCodec {
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             let info = (try? c.decodeIfPresent(Info.self, forKey: .info)) ?? nil
-            self.info = info ?? Info(name: "未命名集合", schema: nil)
+            // 占位名在 `decode(_:l10n:)` 出口统一本地化（解码阶段拿不到取词器）。
+            self.info = info ?? Info(name: PostmanCodec.unnamedPlaceholder, schema: nil)
             self.item = c.tolerantLossyArray(.item)
             self.variable = (try? c.decodeIfPresent([Variable].self, forKey: .variable)) ?? nil
             self.auth = (try? c.decodeIfPresent(Auth.self, forKey: .auth)) ?? nil
@@ -81,7 +87,7 @@ enum PostmanCodec {
             // 后者是空文件夹。
             let children: [Item]? = c.contains(.item) ? c.tolerantLossyArray(.item) : nil
             self.init(
-                name: (try? c.decodeIfPresent(String.self, forKey: .name)) ?? nil ?? "未命名",
+                name: (try? c.decodeIfPresent(String.self, forKey: .name)) ?? nil ?? PostmanCodec.unnamedItemPlaceholder,
                 item: children,
                 request: (try? c.decodeIfPresent(Request.self, forKey: .request)) ?? nil
             )
@@ -259,7 +265,10 @@ enum PostmanCodec {
 
     /// 导入过程中累积的提示。用引用类型承载，避免每个 convert 调用都要回传。
     private final class ImportNotes {
+        let l10n: Localizer
         private(set) var warnings: [String] = []
+
+        init(l10n: Localizer) { self.l10n = l10n }
         private var seen = Set<String>()
 
         func note(_ message: String) {
@@ -268,7 +277,7 @@ enum PostmanCodec {
         }
     }
 
-    static func decode(_ data: Data) throws -> ImportResult {
+    static func decode(_ data: Data, l10n: Localizer) throws -> ImportResult {
         let collection: Collection
         do {
             collection = try JSONDecoder().decode(Collection.self, from: data)
@@ -276,7 +285,12 @@ enum PostmanCodec {
             throw CodecError.notACollection
         }
 
-        let notes = ImportNotes()
+        // 集合名可能是解码期写入的占位符（缺 info/name），出口处替换成当前语言。
+        let collectionName = collection.info.name == unnamedPlaceholder
+            ? l10n(.postmanUnnamedCollection)
+            : collection.info.name
+
+        let notes = ImportNotes(l10n: l10n)
         let nodes = collection.item
             .compactMap { convert($0, collectionAuth: collection.auth, notes: notes) }
         let count = countRequests(nodes)
@@ -287,25 +301,27 @@ enum PostmanCodec {
             let items = variables.map {
                 KeyValueItem(key: $0.key, value: $0.value ?? "")
             }
-            environment = APIEnvironment(name: "\(collection.info.name) 变量", variables: items)
+            environment = APIEnvironment(name: l10n(.postmanEnvironmentSuffix, collectionName), variables: items)
         }
 
         return ImportResult(
             nodes: nodes,
             environment: environment,
-            collectionName: collection.info.name,
+            collectionName: collectionName,
             requestCount: count,
             warnings: notes.warnings
         )
     }
 
     private static func convert(_ item: Item, collectionAuth: Auth?, notes: ImportNotes) -> CollectionNode? {
+        // 条目缺 name 时解码期写的是占位符，这里换成当前语言。
+        let name = item.name == unnamedItemPlaceholder ? notes.l10n(.postmanUnnamedItem) : item.name
         if let children = item.item {
             let converted = children.compactMap { convert($0, collectionAuth: collectionAuth, notes: notes) }
-            return .folder(.init(name: item.name, children: converted))
+            return .folder(.init(name: name, children: converted))
         }
         guard let request = item.request else { return nil }
-        return .request(.init(name: item.name, request: convert(request, collectionAuth: collectionAuth, notes: notes)))
+        return .request(.init(name: name, request: convert(request, collectionAuth: collectionAuth, notes: notes)))
     }
 
     private static func convert(_ request: Request, collectionAuth: Auth?, notes: ImportNotes) -> APIRequest {
@@ -358,7 +374,7 @@ enum PostmanCodec {
                     return KeyValueItem(
                         isEnabled: !($0.disabled ?? false) && !isFile,
                         key: $0.key,
-                        value: isFile ? "（文件字段，v1 不支持）" : ($0.value ?? "")
+                        value: isFile ? notes.l10n(.curlFileFieldPlaceholder) : ($0.value ?? "")
                     )
                 }
             case "graphql":
@@ -428,7 +444,7 @@ enum PostmanCodec {
         default:
             // oauth1/oauth2/digest/awsv4/hawk/ntlm/edgegrid 需要动态签名或挑战应答，
             // 静态导入无法还原；如实告知，而不是让请求带着"看起来有认证"的假象发出去。
-            notes.note("认证类型 \(type) 需要动态签名，无法在导入时转换，请手动配置对应请求。")
+            notes.note(notes.l10n(.postmanWarningAuth, type))
         }
     }
 

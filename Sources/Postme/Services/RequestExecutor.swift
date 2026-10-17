@@ -1,23 +1,28 @@
 import Foundation
 
 /// 请求执行失败。
-enum RequestFailure: LocalizedError {
+///
+/// 不再实现 `LocalizedError.errorDescription`：那会返回硬编码中文串，
+/// 在英文界面下泄漏出去。调用方用 `message(_:)` 按当前语言取文案。
+enum RequestFailure: Error {
     case invalidURL(String)
     case transport(Error)
     /// 用户主动取消。**不是错误**：调用方应静默回到空闲，不报错、不记历史。
     case cancelled
     case unexpected
 
-    var errorDescription: String? {
+    /// 面向用户的说明。`.transport` 保留系统给的 `localizedDescription`
+    /// （那是系统语言，跟着用户走）。
+    func message(_ l10n: Localizer) -> String {
         switch self {
         case .invalidURL(let raw):
-            return raw.isEmpty ? "URL 为空" : "URL 无效：\(raw)"
+            return raw.isEmpty ? l10n(.failureEmptyURL) : l10n(.failureInvalidURL, raw)
         case .transport(let error):
             return error.localizedDescription
         case .cancelled:
-            return "请求已取消"
+            return l10n(.failureCancelled)
         case .unexpected:
-            return "未收到有效的 HTTP 响应"
+            return l10n(.failureUnexpected)
         }
     }
 }

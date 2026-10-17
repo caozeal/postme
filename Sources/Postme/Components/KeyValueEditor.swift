@@ -3,9 +3,11 @@ import SwiftUI
 /// 通用键值表编辑器，headers / query params / form fields 共用。
 /// 支持每行启用开关、增删行。
 struct KeyValueEditor: View {
+    @Environment(AppState.self) private var app
     @Binding var items: [KeyValueItem]
-    var keyPlaceholder: String = "键"
-    var valuePlaceholder: String = "值"
+    /// 占位符由调用方本地化后传入（不设中文默认值，否则英文界面会漏出中文）。
+    var keyPlaceholder: String
+    var valuePlaceholder: String
 
     private let controlWidth: CGFloat = 26
     private let spacing: CGFloat = 8
@@ -28,7 +30,7 @@ struct KeyValueEditor: View {
 
     private var header: some View {
         HStack(spacing: spacing) {
-            Text("启用").frame(width: controlWidth, alignment: .leading)
+            Text(app.t(.keyValueEnabled)).frame(width: controlWidth, alignment: .leading)
             Text(keyPlaceholder).frame(maxWidth: .infinity, alignment: .leading)
             Text(valuePlaceholder).frame(maxWidth: .infinity, alignment: .leading)
             Text("").frame(width: controlWidth)
@@ -65,7 +67,7 @@ struct KeyValueEditor: View {
             }
             .buttonStyle(.borderless)
             .frame(width: controlWidth)
-            .help("删除此行")
+            .help(app.t(.deleteRowHelp))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 3)
@@ -76,7 +78,7 @@ struct KeyValueEditor: View {
         Button {
             items.append(KeyValueItem())
         } label: {
-            Label("添加一行", systemImage: "plus")
+            Label(app.t(.addRowButton), systemImage: "plus")
                 .font(.system(size: 12))
         }
         .buttonStyle(.borderless)

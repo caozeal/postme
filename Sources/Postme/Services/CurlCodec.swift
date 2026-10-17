@@ -14,25 +14,29 @@ enum CurlCodec {
 
     // MARK: - 错误
 
-    enum CodecError: LocalizedError, Equatable {
+    /// 导入失败原因。
+    ///
+    /// 不实现 `LocalizedError`：`errorDescription` 只能返回单一语言的串，
+    /// 在另一种界面语言下必然泄漏。调用方用 `message(_:)` 取当前语言的文案。
+    enum CodecError: Error, Equatable {
         case emptyInput
         case noCommand
         case missingValue(command: Int, flag: String)
         case missingURL(command: Int)
         case unterminatedQuote(command: Int)
 
-        var errorDescription: String? {
+        func message(_ l10n: Localizer) -> String {
             switch self {
             case .emptyInput:
-                return "没有可导入的内容"
+                return l10n(.curlErrorEmptyInput)
             case .noCommand:
-                return "没找到 curl 命令：文本里需要有以 curl 开头的命令"
+                return l10n(.curlErrorNoCommand)
             case .missingValue(let command, let flag):
-                return "第 \(command) 条命令：\(flag) 后面缺少取值"
+                return l10n(.curlErrorMissingValue, command, flag)
             case .missingURL(let command):
-                return "第 \(command) 条命令：没找到请求地址"
+                return l10n(.curlErrorMissingURL, command)
             case .unterminatedQuote(let command):
-                return "第 \(command) 条命令：引号没有闭合"
+                return l10n(.curlErrorUnterminatedQuote, command)
             }
         }
     }
@@ -46,14 +50,14 @@ enum CurlCodec {
 
     // MARK: - 入口
 
-    static func decode(_ text: String) throws -> ImportResult {
+    static func decode(_ text: String, l10n: Localizer) throws -> ImportResult {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw CodecError.emptyInput
         }
         let blocks = commandBlocks(in: text)
         guard !blocks.isEmpty else { throw CodecError.noCommand }
 
-        let notes = Notes()
+        let notes = Notes(l10n: l10n)
         var requests: [APIRequest] = []
         for (offset, block) in blocks.enumerated() {
             let command = offset + 1
@@ -73,8 +77,11 @@ enum CurlCodec {
 
     /// 导入过程中累积的提示，去重后回传。用引用类型承载，避免层层回传。
     private final class Notes {
+        let l10n: Localizer
         private(set) var messages: [String] = []
         private var seen = Set<String>()
+
+        init(l10n: Localizer) { self.l10n = l10n }
 
         func add(_ message: String) {
             guard seen.insert(message).inserted else { return }
@@ -408,9 +415,9 @@ enum CurlCodec {
                 if state.url == nil, looksLikeURL(flag) {
                     state.url = flag
                 } else if state.url == nil {
-                    notes.add("无法识别的参数「\(flag)」已忽略。")
+                    notes.add(notes.l10n(.curlWarningUnknownArg, flag))
                 } else {
-                    notes.add("多余的地址「\(flag)」已忽略。")
+                    notes.add(notes.l10n(.curlWarningExtraURL, flag))
                 }
                 continue
             }
@@ -433,14 +440,14 @@ enum CurlCodec {
                     // 逐条追加而不是去重：curl 允许同名头出现多次
                     state.headers.append(header)
                 } else {
-                    notes.add("请求头「\(raw)」缺少冒号，已忽略。")
+                    notes.add(notes.l10n(.curlWarningHeaderNoColon, raw))
                 }
             case "-b", "--cookie":
                 let raw = try requireValue(flag, value)
                 if raw.contains("=") {
                     state.cookies = raw
                 } else {
-                    notes.add("从文件读 cookie（-b \(raw)）暂不支持，请手动补 Cookie 头。")
+                    notes.add(notes.l10n(.curlWarningCookieFile, raw))
                 }
             case "-A", "--user-agent":
                 state.headers.append(("User-Agent", try requireValue(flag, value)))
@@ -455,7 +462,7 @@ enum CurlCodec {
             case "-d", "--data", "--data-raw", "--data-ascii", "--data-binary":
                 let raw = try requireValue(flag, value)
                 if raw.hasPrefix("@") {
-                    notes.add("\(flag) \(raw) 表示从文件读正文，postme 无法读该文件，已按字面文本导入。")
+                    notes.add(notes.l10n(.curlWarningDataFromFile, flag, raw))
                 }
                 state.dataParts.append(raw)
             case "--data-urlencode":
@@ -463,7 +470,7 @@ enum CurlCodec {
                 if let field = parseURLEncoded(raw) {
                     state.urlEncoded.append(field)
                 } else {
-                    notes.add("--data-urlencode「\(raw)」不是 key=value 形态，已忽略。")
+                    notes.add(notes.l10n(.curlWarningURLEncodedShape, raw))
                 }
             case "--json":
                 state.jsonPayload = try requireValue(flag, value)
@@ -483,21 +490,21 @@ enum CurlCodec {
                 // 手工设 Accept-Encoding 反而可能让自动解压失效，正文会变成乱码。
                 break
             case "-k", "--insecure":
-                notes.add("curl 的 -k（跳过证书校验）是全局设置，无法随请求导入；需要时请在 设置 → 允许自签名证书 里开启。")
+                notes.add(notes.l10n(.curlWarningInsecure))
             case "-L", "--location":
-                notes.add("curl 的 -L（跟随重定向）是全局设置，postme 默认就跟随，无需额外配置。")
+                notes.add(notes.l10n(.curlWarningLocation))
             case "-m", "--max-time", "--connect-timeout":
-                notes.add("超时（\(flag)）是全局设置，不会随导入带过来。")
+                notes.add(notes.l10n(.curlWarningTimeout, flag))
             case "-x", "--proxy":
-                notes.add("代理（\(flag)）无法随请求导入，请在网络层配置。")
+                notes.add(notes.l10n(.curlWarningProxy, flag))
             case "-E", "--cert", "--key", "--cacert", "--capath":
-                notes.add("客户端证书（\(flag)）暂不支持导入。")
+                notes.add(notes.l10n(.curlWarningCert, flag))
             case "--digest", "--ntlm", "--negotiate", "--anyauth":
-                notes.add("认证方式 \(flag) 需要动态握手，无法在导入时还原，请手动配置。")
+                notes.add(notes.l10n(.curlWarningAuth, flag))
             case "-T", "--upload-file":
-                notes.add("上传文件（-T）暂不支持，已忽略。")
+                notes.add(notes.l10n(.curlWarningUpload))
             case "--resolve", "--connect-to":
-                notes.add("\(flag) 无法随请求导入，请改用能直接解析的地址。")
+                notes.add(notes.l10n(.curlWarningResolve, flag))
 
             case "-i", "--include", "-s", "--silent", "-S", "--show-error",
                  "-v", "--verbose", "-o", "--output", "-O", "--remote-name",
@@ -512,7 +519,7 @@ enum CurlCodec {
                 break
 
             default:
-                notes.add("未识别的参数「\(flag)」已忽略。")
+                notes.add(notes.l10n(.curlWarningUnknownFlag, flag))
             }
         }
         states.append(state)
@@ -539,7 +546,7 @@ enum CurlCodec {
         if !rawURL.contains("://"), !rawURL.hasPrefix("{{") {
             // curl 对 `curl localhost:8080/x` 就是按 http 发的，这里保持一致
             rawURL = "http://" + rawURL
-            notes.add("地址缺少协议头，已按 http:// 补全。")
+            notes.add(notes.l10n(.curlWarningMissingScheme))
         }
 
         var request = APIRequest()
@@ -565,7 +572,7 @@ enum CurlCodec {
         }
         if let user = state.user {
             if !user.contains(":") {
-                notes.add("curl 的 -u 只给了用户名（curl 会交互式索要密码），导入时按空密码处理。")
+                notes.add(notes.l10n(.curlWarningUserNoPassword))
             }
             setHeader("Authorization", "Basic \(Data(user.utf8).base64EncodedString())", on: &request)
         }
@@ -584,11 +591,11 @@ enum CurlCodec {
             request.method = method
         } else {
             request.method = fallback
-            notes.add("请求方法「\(methodText)」不在支持范围（GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS），已按 \(fallback.rawValue) 导入。")
+            notes.add(notes.l10n(.curlWarningUnsupportedMethod, methodText, fallback.rawValue))
         }
 
         applyBody(state, to: &request, notes: notes)
-        request.name = name(for: request)
+        request.name = name(for: request, l10n: notes.l10n)
         return request
     }
 
@@ -623,17 +630,17 @@ enum CurlCodec {
             for form in state.forms {
                 if form.isFile {
                     if !warnedFile {
-                        notes.add("文件上传字段（-F key=@file）暂不支持，已保留为禁用字段。")
+                        notes.add(notes.l10n(.curlWarningFileField))
                         warnedFile = true
                     }
-                    fields.append(KeyValueItem(isEnabled: false, key: form.key, value: "（文件字段，v1 不支持）"))
+                    fields.append(KeyValueItem(isEnabled: false, key: form.key, value: notes.l10n(.curlFileFieldPlaceholder)))
                 } else {
                     fields.append(KeyValueItem(key: form.key, value: form.value))
                 }
             }
             request.formFields = fields
             if !dataText.isEmpty {
-                notes.add("同时出现 -F 与 -d：curl 只会发送 -F，导入时以 -F 为准。")
+                notes.add(notes.l10n(.curlWarningFormAndData))
             }
             return
         }
@@ -675,7 +682,7 @@ enum CurlCodec {
                 request.formFields = parsed + urlEncodedFields
                 return
             }
-            notes.add("--data-urlencode 与其它形态的正文混用，无法合并，已只保留正文。")
+            notes.add(notes.l10n(.curlWarningMixedBody))
         }
 
         // 只有「curl 明确要求 JSON」才算 JSON：`--json` 会自己设头，显式 `Content-Type` 是用户意图。
@@ -790,7 +797,7 @@ enum CurlCodec {
     }
 
     /// 用地址最后一段命名；没有路径段就用主机名。
-    private static func name(for request: APIRequest) -> String {
+    private static func name(for request: APIRequest, l10n: Localizer) -> String {
         var rest = request.url
         var host = ""
         if let range = rest.range(of: "://") {
@@ -805,6 +812,6 @@ enum CurlCodec {
         }
         if let last = rest.split(separator: "/").last, !last.isEmpty { return String(last) }
         if !host.isEmpty { return host }
-        return "cURL 导入"
+        return l10n(.curlImportDefaultName)
     }
 }

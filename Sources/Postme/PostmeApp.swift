@@ -31,37 +31,37 @@ struct PostmeApp: App {
         .defaultSize(width: 1180, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("新建请求") { app.newRequest() }
+                Button(app.t(.menuNewRequest)) { app.newRequest() }
                     .keyboardShortcut("n", modifiers: .command)
 
                 Divider()
 
-                Button("导入 cURL…") { app.showCurlImport = true }
+                Button(app.t(.menuImportCurl)) { app.showCurlImport = true }
                     .keyboardShortcut("v", modifiers: [.command, .shift])
 
-                Button("导入为项目(Postman / ApiPost)…") { FileActions.importPostman(into: app) }
+                Button(app.t(.menuImportPostman)) { FileActions.importPostman(into: app) }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
 
-                Button("导出项目为 Postman…") { FileActions.exportPostman(from: app) }
+                Button(app.t(.menuExportPostman)) { FileActions.exportPostman(from: app) }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
             }
 
             CommandGroup(replacing: .saveItem) {
-                Button("保存到项目") { app.beginSave() }
+                Button(app.t(.menuSaveToProject)) { app.beginSave() }
                     .keyboardShortcut("s", modifiers: .command)
             }
 
             CommandGroup(after: .toolbar) {
-                Button("发送请求") { Task { await app.send() } }
+                Button(app.t(.menuSendRequest)) { Task { await app.send() } }
                     .keyboardShortcut(.return, modifiers: .command)
 
-                Button("取消请求") { app.cancelSend() }
+                Button(app.t(.menuCancelRequest)) { app.cancelSend() }
                     .keyboardShortcut(".", modifiers: .command)
                     .disabled(!app.isSending)
 
                 Divider()
 
-                Button("搜索请求") { app.requestSearchFocus() }
+                Button(app.t(.menuSearchRequests)) { app.requestSearchFocus() }
                     .keyboardShortcut("f", modifiers: .command)
             }
         }

@@ -10,14 +10,14 @@ enum BodyKind: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// 界面展示名。
-    var displayName: String {
+    /// 界面展示名（由调用方传入当前语言的取词器）。
+    func displayName(_ l10n: Localizer) -> String {
         switch self {
-        case .none: return "无"
-        case .json: return "JSON"
-        case .rawText: return "Raw Text"
-        case .formURLEncoded: return "Form URL Encoded"
-        case .multipart: return "Multipart Form"
+        case .none: return l10n(.bodyKindNone)
+        case .json: return l10n(.bodyKindJSON)
+        case .rawText: return l10n(.bodyKindRawText)
+        case .formURLEncoded: return l10n(.bodyKindFormURLEncoded)
+        case .multipart: return l10n(.bodyKindMultipart)
         }
     }
 

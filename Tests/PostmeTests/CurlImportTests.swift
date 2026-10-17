@@ -10,12 +10,12 @@ final class CurlImportTests: XCTestCase {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("postme-curl-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir))
+        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir), languageOverride: .zhHans)
         return (app, dir)
     }
 
     private func requests(from command: String) throws -> [APIRequest] {
-        try CurlCodec.decode(command).requests
+        try CurlCodec.decode(command, l10n: .zhHans).requests
     }
 
     // MARK: - 新建项目
@@ -38,7 +38,7 @@ final class CurlImportTests: XCTestCase {
 
         // 落盘后重新读出来还在（导入是"已保存"的请求，不是编辑器草稿）
         app.saveImmediately()
-        let reloaded = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir))
+        let reloaded = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir), languageOverride: .zhHans)
         XCTAssertEqual(reloaded.projects.count, before + 1)
         XCTAssertEqual(reloaded.activeProject?.children.count, 2)
         XCTAssertEqual(reloaded.activeProject?.children.first?.savedRequest?.request.headers.first?.key, "X-A")

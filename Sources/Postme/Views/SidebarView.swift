@@ -39,28 +39,28 @@ struct SidebarView: View {
         .sheet(isPresented: $showNewProjectSheet) { newProjectSheet }
         .sheet(isPresented: $showRenameProjectSheet) { renameProjectSheet }
         .confirmationDialog(
-            "当前请求有未保存的修改",
+            app.t(.draftConflictTitle),
             isPresented: $app.showDraftConflict,
             titleVisibility: .visible
         ) {
-            Button("保存并继续") { app.saveDraftAndContinue() }
-            Button("放弃修改", role: .destructive) { app.discardDraftAndContinue() }
-            Button("取消", role: .cancel) { app.cancelDraftConflict() }
+            Button(app.t(.draftConflictSaveAndContinue)) { app.saveDraftAndContinue() }
+            Button(app.t(.draftConflictDiscard), role: .destructive) { app.discardDraftAndContinue() }
+            Button(app.t(.cancelButton), role: .cancel) { app.cancelDraftConflict() }
         } message: {
-            Text("切换后当前编辑内容会被替换。")
+            Text(app.t(.draftConflictMessage))
         }
         .confirmationDialog(
-            "删除项目",
+            app.t(.deleteProjectTitle),
             isPresented: deleteProjectDialogPresented,
             titleVisibility: .visible
         ) {
-            Button("删除项目", role: .destructive) {
+            Button(app.t(.deleteProjectTitle), role: .destructive) {
                 if let id = projectToDeleteID { app.deleteProject(id: id) }
                 projectToDeleteID = nil
             }
-            Button("取消", role: .cancel) { projectToDeleteID = nil }
+            Button(app.t(.cancelButton), role: .cancel) { projectToDeleteID = nil }
         } message: {
-            Text("将删除项目「\(projectToDeleteName)」及其全部目录和请求，且不可恢复。")
+            Text(app.t(.deleteProjectMessage, projectToDeleteName))
         }
         .onChange(of: app.selectedNodeID) { _, newValue in
             app.handleSidebarSelection(newValue)
@@ -74,23 +74,23 @@ struct SidebarView: View {
 
     private var header: some View {
         HStack {
-            Text("项目")
+            Text(app.t(.sidebarProjectsTitle))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer()
             Menu {
-                Button("新建项目") { beginNewProject() }
-                Button("新建请求") { app.newRequest() }
-                Button("新建文件夹") { beginNewFolder(parentID: nil) }
+                Button(app.t(.sidebarNewProject)) { beginNewProject() }
+                Button(app.t(.sidebarNewRequest)) { app.newRequest() }
+                Button(app.t(.sidebarNewFolder)) { beginNewFolder(parentID: nil) }
                 Divider()
-                Button("导入 cURL 命令…") { app.showCurlImport = true }
+                Button(app.t(.sidebarImportCurlCommand)) { app.showCurlImport = true }
             } label: {
                 Image(systemName: "plus")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("新建")
+            .help(app.t(.sidebarNewHelp))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -109,9 +109,9 @@ struct SidebarView: View {
                 }
             }
             Divider()
-            Button("新建项目…") { beginNewProject() }
-            Button("重命名项目…") { beginRenameProject() }
-            Button("删除项目…", role: .destructive) {
+            Button(app.t(.sidebarNewProjectEllipsis)) { beginNewProject() }
+            Button(app.t(.sidebarRenameProjectEllipsis)) { beginRenameProject() }
+            Button(app.t(.sidebarDeleteProjectEllipsis), role: .destructive) {
                 projectToDeleteID = app.activeProject?.id
             }
             .disabled(app.projects.count <= 1)
@@ -119,7 +119,7 @@ struct SidebarView: View {
             HStack(spacing: 6) {
                 Image(systemName: "square.stack.3d.up")
                     .foregroundStyle(.secondary)
-                Text(app.activeProject?.name ?? "无项目")
+                Text(app.activeProject?.name ?? app.t(.sidebarNoProject))
                     .lineLimit(1)
                 Spacer()
                 Image(systemName: "chevron.up.chevron.down")
@@ -136,7 +136,7 @@ struct SidebarView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .help("切换项目")
+        .help(app.t(.sidebarSwitchProjectHelp))
     }
 
     private var searchBar: some View {
@@ -145,7 +145,7 @@ struct SidebarView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-            TextField("搜索请求", text: $app.searchKeyword)
+            TextField(app.t(.sidebarSearchPlaceholder), text: $app.searchKeyword)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($searchFocused)
@@ -169,28 +169,28 @@ struct SidebarView: View {
         @Bindable var app = app
         return List(selection: $app.selectedNodeID) {
             if app.isSearching {
-                Section("搜索结果（\(app.searchResults.count)）") {
+                Section(app.t(.sidebarSearchResultsSection, app.searchResults.count)) {
                     if app.searchResults.isEmpty {
-                        emptyHint("没有匹配的请求")
+                        emptyHint(app.t(.sidebarNoSearchResults))
                     }
                     ForEach(app.searchResults) { node in
                         row(for: node)
                     }
                 }
             } else {
-                Section("目录") {
+                Section(app.t(.sidebarTreeSection)) {
                     let children = app.activeProject?.children ?? []
                     if children.isEmpty {
-                        emptyHint("当前项目还是空的，点右上角 ＋ 新建")
+                        emptyHint(app.t(.sidebarEmptyProject))
                     }
                     OutlineGroup(children, children: \.children) { node in
                         row(for: node)
                     }
                 }
 
-                Section("历史") {
+                Section(app.t(.sidebarHistorySection)) {
                     if app.history.isEmpty {
-                        emptyHint("发送请求后会出现在这里")
+                        emptyHint(app.t(.sidebarEmptyHistory))
                     }
                     ForEach(app.history.prefix(50)) { entry in
                         historyRow(entry)
@@ -255,10 +255,10 @@ struct SidebarView: View {
         .contentShape(Rectangle())
         .onTapGesture { app.restoreFromHistory(entry) }
         .contextMenu {
-            Button("恢复到编辑器") { app.restoreFromHistory(entry) }
-            Button("复制 URL") { copyToClipboard(entry.url) }
+            Button(app.t(.sidebarRestoreToEditor)) { app.restoreFromHistory(entry) }
+            Button(app.t(.copyURLButton)) { copyToClipboard(entry.url) }
             Divider()
-            Button("删除记录", role: .destructive) { app.deleteHistoryEntry(id: entry.id) }
+            Button(app.t(.sidebarDeleteRecord), role: .destructive) { app.deleteHistoryEntry(id: entry.id) }
         }
     }
 
@@ -266,42 +266,42 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func folderMenu(_ folder: CollectionNode.Folder) -> some View {
-        Button("在此新建请求") { app.newRequest(inFolder: folder.id) }
-        Button("新建子文件夹") { beginNewFolder(parentID: folder.id) }
+        Button(app.t(.sidebarNewRequestHere)) { app.newRequest(inFolder: folder.id) }
+        Button(app.t(.sidebarNewSubfolder)) { beginNewFolder(parentID: folder.id) }
         // 仅顶层文件夹可「提为项目」——嵌套文件夹提出来会打乱项目内的目录层级
         if app.activeProject?.children.contains(where: { $0.id == folder.id }) == true {
-            Button("提为项目") { app.promoteFolderToProject(id: folder.id) }
+            Button(app.t(.sidebarPromoteToProject)) { app.promoteFolderToProject(id: folder.id) }
         }
         Divider()
-        Button("重命名") { beginRename(id: folder.id, current: folder.name) }
-        Button("删除文件夹", role: .destructive) { app.deleteNode(id: folder.id) }
+        Button(app.t(.renameButton)) { beginRename(id: folder.id, current: folder.name) }
+        Button(app.t(.sidebarDeleteFolder), role: .destructive) { app.deleteNode(id: folder.id) }
     }
 
     @ViewBuilder
     private func requestMenu(_ saved: CollectionNode.SavedRequest) -> some View {
-        Button("打开") { app.openSavedRequest(.request(saved)) }
-        Button("用当前编辑器内容覆盖") {
+        Button(app.t(.sidebarOpen)) { app.openSavedRequest(.request(saved)) }
+        Button(app.t(.sidebarOverwriteWithEditor)) {
             app.overwriteSavedRequest(id: saved.id, with: app.draft)
         }
         Divider()
-        Button("复制 URL") { copyToClipboard(saved.request.url) }
-        Button("重命名") { beginRename(id: saved.id, current: saved.name) }
-        Button("删除", role: .destructive) { app.deleteNode(id: saved.id) }
+        Button(app.t(.copyURLButton)) { copyToClipboard(saved.request.url) }
+        Button(app.t(.renameButton)) { beginRename(id: saved.id, current: saved.name) }
+        Button(app.t(.deleteButton), role: .destructive) { app.deleteNode(id: saved.id) }
     }
 
     // MARK: - 弹窗
 
     private var renameSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("重命名").font(.headline)
-            TextField("名称", text: $renameText)
+            Text(app.t(.renameButton)).font(.headline)
+            TextField(app.t(.nameLabel), text: $renameText)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 280)
                 .onSubmit { commitRename() }
             HStack {
                 Spacer()
-                Button("取消") { showRenameSheet = false }
-                Button("确定") { commitRename() }
+                Button(app.t(.cancelButton)) { showRenameSheet = false }
+                Button(app.t(.okButton)) { commitRename() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -311,15 +311,15 @@ struct SidebarView: View {
 
     private var newFolderSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("新建文件夹").font(.headline)
-            TextField("文件夹名", text: $newFolderName)
+            Text(app.t(.newFolderTitle)).font(.headline)
+            TextField(app.t(.newFolderNamePlaceholder), text: $newFolderName)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 280)
                 .onSubmit { commitNewFolder() }
             HStack {
                 Spacer()
-                Button("取消") { showNewFolderSheet = false }
-                Button("确定") { commitNewFolder() }
+                Button(app.t(.cancelButton)) { showNewFolderSheet = false }
+                Button(app.t(.okButton)) { commitNewFolder() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -329,15 +329,15 @@ struct SidebarView: View {
 
     private var newProjectSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("新建项目").font(.headline)
-            TextField("项目名", text: $newProjectName)
+            Text(app.t(.newProjectTitle)).font(.headline)
+            TextField(app.t(.projectNamePlaceholder), text: $newProjectName)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 280)
                 .onSubmit { commitNewProject() }
             HStack {
                 Spacer()
-                Button("取消") { showNewProjectSheet = false }
-                Button("确定") { commitNewProject() }
+                Button(app.t(.cancelButton)) { showNewProjectSheet = false }
+                Button(app.t(.okButton)) { commitNewProject() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(newProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -347,15 +347,15 @@ struct SidebarView: View {
 
     private var renameProjectSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("重命名项目").font(.headline)
-            TextField("项目名", text: $renameProjectText)
+            Text(app.t(.renameProjectTitle)).font(.headline)
+            TextField(app.t(.projectNamePlaceholder), text: $renameProjectText)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 280)
                 .onSubmit { commitRenameProject() }
             HStack {
                 Spacer()
-                Button("取消") { showRenameProjectSheet = false }
-                Button("确定") { commitRenameProject() }
+                Button(app.t(.cancelButton)) { showRenameProjectSheet = false }
+                Button(app.t(.okButton)) { commitRenameProject() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(renameProjectText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }

@@ -10,7 +10,7 @@ import XCTest
 final class PostmanAuthAndToleranceTests: XCTestCase {
 
     private func decode(_ json: String) throws -> PostmanCodec.ImportResult {
-        try PostmanCodec.decode(Data(json.utf8))
+        try PostmanCodec.decode(Data(json.utf8), l10n: .zhHans)
     }
 
     private func collection(_ body: String) -> String {
@@ -229,7 +229,7 @@ final class PostmanAuthAndToleranceTests: XCTestCase {
             project: Project(name: "认证项目", children: [.request(.init(name: "r", request: req))]),
             environment: nil
         )
-        let back = try PostmanCodec.decode(data)
+        let back = try PostmanCodec.decode(data, l10n: .zhHans)
         XCTAssertEqual(
             back.nodes.first?.savedRequest?.request.headers.first {
                 $0.key.lowercased() == "authorization"

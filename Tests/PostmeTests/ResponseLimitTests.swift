@@ -29,7 +29,7 @@ final class ResponseLimitTests: XCTestCase {
         response.isBodyTruncated = true
         response.bodyLimitBytes = 16 * 1024 * 1024
 
-        let text = response.displayBodyText()
+        let text = response.displayBodyText(l10n: .zhHans)
         XCTAssertTrue(text.contains("已停止接收"))
         XCTAssertTrue(text.contains("16.00 MB"))
         XCTAssertFalse(text.contains("\n  "), "截断内容不应被美化")
@@ -37,10 +37,10 @@ final class ResponseLimitTests: XCTestCase {
 
     func testTruncationMessageStatesTheActualLimit() {
         let response0 = makeTruncated(limit: 8 * 1024 * 1024)
-        XCTAssertTrue(response0.displayBodyText().contains("8.00 MB"))
+        XCTAssertTrue(response0.displayBodyText(l10n: .zhHans).contains("8.00 MB"))
 
         let response1 = makeTruncated(limit: 1024)
-        XCTAssertTrue(response1.displayBodyText().contains("1.0 KB"))
+        XCTAssertTrue(response1.displayBodyText(l10n: .zhHans).contains("1.0 KB"))
     }
 
     private func makeTruncated(limit: Int) -> APIResponse {
@@ -65,8 +65,8 @@ final class ResponseLimitTests: XCTestCase {
             timing: RequestTiming(total: 0.1)
         )
         XCTAssertFalse(response.isBodyTruncated)
-        XCTAssertFalse(response.displayBodyText().contains("已停止接收"))
-        XCTAssertTrue(response.displayBodyText().contains("\n"), "未截断的 JSON 应被美化")
+        XCTAssertFalse(response.displayBodyText(l10n: .zhHans).contains("已停止接收"))
+        XCTAssertTrue(response.displayBodyText(l10n: .zhHans).contains("\n"), "未截断的 JSON 应被美化")
     }
 
     // MARK: - 上限与取消的分类（走真实执行器）

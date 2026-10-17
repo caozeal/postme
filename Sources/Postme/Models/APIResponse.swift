@@ -200,15 +200,15 @@ struct APIResponse {
     }
 
     /// 界面展示用文本：文本类返回正文，二进制返回占位说明。
-    var displayText: String {
+    func displayText(l10n: Localizer) -> String {
         if let s = textBody { return s }
         let kb = Double(bodySize) / 1024.0
-        return "（二进制响应，\(String(format: "%.1f", kb)) KB，无法以文本展示）"
+        return l10n(.responseBinaryPlaceholder, kb)
     }
 
     /// 响应体展示文本：尽可能美化 JSON；超过阈值则先截断再展示，避免主线程卡死。
     /// 调用方（AppState）在收到响应时计算一次并缓存，不要在视图 body 里反复调用。
-    func displayBodyText() -> String {
+    func displayBodyText(l10n: Localizer) -> String {
         let limit = APIResponse.displayTruncationThreshold
         // 传输层已截断（超过 maxResponseBytes，数据本身没收全）时，无论如何都不能当完整内容处理：
         // 美化半截 JSON 必然失败，失败后回退原文又会让人以为这就是全部响应。
@@ -221,7 +221,7 @@ struct APIResponse {
             raw = String(decoding: body.prefix(limit), as: UTF8.self)
             truncated = true
         } else {
-            raw = displayText
+            raw = displayText(l10n: l10n)
         }
 
         var text = raw
@@ -229,10 +229,10 @@ struct APIResponse {
             text = pretty
         }
         if isBodyTruncated {
-            let limitText = bodyLimitBytes > 0 ? formatBytes(bodyLimitBytes) : "配置"
-            text += "\n\n…（响应体超过 \(limitText) 上限，已停止接收；以上为前 \(formatBytes(body.count))）"
+            let limitText = bodyLimitBytes > 0 ? formatBytes(bodyLimitBytes) : l10n(.responseLimitConfigured)
+            text += "\n\n" + l10n(.responseTruncatedByLimit, limitText, formatBytes(body.count))
         } else if truncated {
-            text += "\n\n…（响应体 \(formatBytes(bodySize)) 过大，已截断显示）"
+            text += "\n\n" + l10n(.responseTruncatedForDisplay, formatBytes(bodySize))
         }
         return text
     }

@@ -9,7 +9,7 @@ struct ResponseView: View {
         Group {
             if app.isSending {
                 centered {
-                    ProgressView("请求中…").controlSize(.small)
+                    ProgressView(app.t(.sendingProgress)).controlSize(.small)
                 }
             } else if let error = app.errorMessage {
                 errorState(error)
@@ -17,7 +17,7 @@ struct ResponseView: View {
                 loaded(response)
             } else {
                 centered {
-                    Text("发送请求后，响应会显示在这里")
+                    Text(app.t(.responseEmptyHint))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -35,7 +35,7 @@ struct ResponseView: View {
             HStack(spacing: 10) {
                 Picker("", selection: $app.responseTab) {
                     ForEach(ResponseTab.allCases) { tab in
-                        Text(tab.title).tag(tab)
+                        Text(tab.title(app.t)).tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -85,11 +85,11 @@ struct ResponseView: View {
     private func headersPane(_ response: APIResponse) -> some View {
         VStack(spacing: 0) {
             HStack {
-                Text("共 \(response.headers.count) 个响应头")
+                Text(app.t(.responseHeadersCount, response.headers.count))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("复制全部") {
+                Button(app.t(.copyAllButton)) {
                     let text = response.headers.map { "\($0.name): \($0.value)" }.joined(separator: "\n")
                     copyToClipboard(text)
                 }
@@ -127,12 +127,12 @@ struct ResponseView: View {
     private func timingPane(_ response: APIResponse) -> some View {
         let timing = response.timing
         let rows: [(String, TimeInterval?)] = [
-            ("DNS 解析", timing.dns),
-            ("TCP 连接", timing.tcp),
-            ("TLS 握手", timing.tls),
-            ("等待首字节 (TTFB)", timing.ttfb),
-            ("内容下载", timing.transfer),
-            ("总计", timing.total)
+            (app.t(.timingDNS), timing.dns),
+            (app.t(.timingTCP), timing.tcp),
+            (app.t(.timingTLS), timing.tls),
+            (app.t(.timingTTFB), timing.ttfb),
+            (app.t(.timingTransfer), timing.transfer),
+            (app.t(.timingTotal), timing.total)
         ]
         let maxValue = max(timing.total, rows.compactMap { $0.1 }.max() ?? 0, 0.0001)
 
@@ -152,7 +152,7 @@ struct ResponseView: View {
                                 RoundedRectangle(cornerRadius: 3)
                                     .fill(Color.secondary.opacity(0.12))
                                 RoundedRectangle(cornerRadius: 3)
-                                    .fill(Color.accentColor.opacity(label == "总计" ? 0.9 : 0.55))
+                                    .fill(Color.accentColor.opacity(label == app.t(.timingTotal) ? 0.9 : 0.55))
                                     .frame(width: max(2, geo.size.width * CGFloat((value ?? 0) / maxValue)))
                             }
                         }
@@ -160,7 +160,7 @@ struct ResponseView: View {
                     }
                 }
 
-                Text("各阶段取自 URLSessionTaskMetrics，存在重叠（例如 TLS 握手包含在 TCP 连接区间内），不代表可直接相加。")
+                Text(app.t(.timingNote))
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                     .padding(.top, 4)
@@ -176,7 +176,7 @@ struct ResponseView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 28))
                 .foregroundStyle(Color(red: 0.85, green: 0.35, blue: 0.15))
-            Text("请求失败")
+            Text(app.t(.requestFailedTitle))
                 .font(.headline)
             Text(message)
                 .font(.system(size: 12, design: .monospaced))
@@ -201,6 +201,7 @@ struct ResponseView: View {
 // MARK: - 响应体面板
 
 private struct ResponseBodyPane: View {
+    @Environment(AppState.self) private var app
     let response: APIResponse
     let displayText: String
 
@@ -229,8 +230,8 @@ private struct ResponseBodyPane: View {
         HStack(spacing: 10) {
             if response.looksLikeJSON {
                 Picker("", selection: $minified) {
-                    Text("格式化").tag(false)
-                    Text("压缩").tag(true)
+                    Text(app.t(.formatButton)).tag(false)
+                    Text(app.t(.minifyButton)).tag(true)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -238,11 +239,11 @@ private struct ResponseBodyPane: View {
             }
 
             if response.isBodyTruncated {
-                Label("响应体超过上限，已停止接收", systemImage: "exclamationmark.triangle.fill")
+                Label(app.t(.bodyTruncatedByLimit), systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
             } else if response.bodySize > APIResponse.displayTruncationThreshold {
-                Label("已截断显示", systemImage: "scissors")
+                Label(app.t(.bodyTruncatedForDisplay), systemImage: "scissors")
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
             }
@@ -252,7 +253,7 @@ private struct ResponseBodyPane: View {
             Button {
                 copyToClipboard(currentText)
             } label: {
-                Label("复制", systemImage: "doc.on.doc")
+                Label(app.t(.copyButton), systemImage: "doc.on.doc")
             }
             .font(.system(size: 11))
         }

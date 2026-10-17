@@ -8,28 +8,41 @@ struct SettingsView: View {
         let settings = app.bindingForSettings()
 
         Form {
-            Section("请求") {
+            Section(app.t(.settingsLanguageSection)) {
+                Picker(app.t(.settingsLanguageLabel), selection: languageBinding) {
+                    Text(app.t(.settingsLanguageSystem)).tag(AppLanguage?.none)
+                    ForEach(AppLanguage.allCases) { language in
+                        // 语言自称永不翻译：英文界面下也要能认出「简体中文」。
+                        Text(language.displayName).tag(AppLanguage?.some(language))
+                    }
+                }
+                Text(app.t(.settingsLanguageHint))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section(app.t(.settingsRequestsSection)) {
                 Stepper(value: settings.timeout, in: 1...3600, step: 5) {
                     HStack {
-                        Text("超时时间")
+                        Text(app.t(.settingsTimeout))
                         Spacer()
-                        Text("\(Int(settings.timeout.wrappedValue)) 秒")
+                        Text(app.t(.settingsSeconds, Int(settings.timeout.wrappedValue)))
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
                 }
 
-                Toggle("跟随重定向", isOn: settings.followRedirects)
+                Toggle(app.t(.settingsFollowRedirects), isOn: settings.followRedirects)
 
-                Toggle("忽略 HTTPS 证书校验（自签证书）", isOn: settings.allowInsecureTLS)
-                Text("仅在调试内网自签证书服务时开启。开启后 TLS 证书不再校验，存在中间人风险。")
+                Toggle(app.t(.settingsAllowInsecureTLS), isOn: settings.allowInsecureTLS)
+                Text(app.t(.settingsAllowInsecureTLSHint))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
 
-            Section("存储") {
+            Section(app.t(.settingsStorageSection)) {
                 HStack(alignment: .top) {
-                    Text("工作区文件")
+                    Text(app.t(.settingsWorkspaceFile))
                     Spacer()
                     Text(app.storagePath)
                         .font(.system(size: 11, design: .monospaced))
@@ -37,22 +50,31 @@ struct SettingsView: View {
                         .textSelection(.enabled)
                         .multilineTextAlignment(.trailing)
                 }
-                Text("项目、环境、历史与设置都保存在这个 JSON 文件里，可直接用 git 备份。")
+                Text(app.t(.settingsWorkspaceFileHint))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
 
-            Section("快捷键") {
-                shortcutRow("发送请求", "⌘ ↩")
-                shortcutRow("保存到项目", "⌘ S")
-                shortcutRow("新建请求", "⌘ N")
-                shortcutRow("搜索请求", "⌘ F")
-                shortcutRow("导入为项目", "⌘ ⇧ I")
-                shortcutRow("导出项目", "⌘ ⇧ E")
+            Section(app.t(.settingsShortcutsSection)) {
+                shortcutRow(app.t(.settingsShortcutSend), "⌘ ↩")
+                shortcutRow(app.t(.settingsShortcutSave), "⌘ S")
+                shortcutRow(app.t(.settingsShortcutNewRequest), "⌘ N")
+                shortcutRow(app.t(.settingsShortcutSearch), "⌘ F")
+                shortcutRow(app.t(.settingsShortcutImport), "⌘ ⇧ I")
+                shortcutRow(app.t(.settingsShortcutExport), "⌘ ⇧ E")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 520)
+        .frame(width: 480, height: 600)
+    }
+
+    /// 语言 Picker 的绑定：写走 `setLanguage`（立即落盘 + 重算响应体文本 + 清掉旧语言提示），
+    /// 不走 `bindingForSettings` 的通用路径——那条只保存，不会重算派生文本。
+    private var languageBinding: Binding<AppLanguage?> {
+        Binding(
+            get: { [weak app] in app?.workspace.settings.language },
+            set: { [weak app] in app?.setLanguage($0) }
+        )
     }
 
     private func shortcutRow(_ label: String, _ keys: String) -> some View {

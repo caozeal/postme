@@ -36,7 +36,7 @@ struct ContentView: View {
             ),
             presenting: app.alertMessage
         ) { _ in
-            Button("好", role: .cancel) { app.alertMessage = nil }
+            Button(app.t(.okButton), role: .cancel) { app.alertMessage = nil }
         } message: { message in
             Text(message.text)
         }
@@ -44,7 +44,7 @@ struct ContentView: View {
 
     private var environmentPicker: some View {
         Menu {
-            Button("无环境") { app.selectEnvironment(id: nil) }
+            Button(app.t(.noEnvironment)) { app.selectEnvironment(id: nil) }
 
             if !app.environments.isEmpty {
                 Divider()
@@ -59,13 +59,13 @@ struct ContentView: View {
             }
 
             Divider()
-            Button("编辑环境…") { app.showEnvironmentEditor = true }
+            Button(app.t(.editEnvironments)) { app.showEnvironmentEditor = true }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "globe")
-                Text(app.activeEnvironment?.name ?? "无环境")
+                Text(app.activeEnvironment?.name ?? app.t(.noEnvironment))
             }
         }
-        .help("切换环境变量")
+        .help(app.t(.switchEnvironmentHelp))
     }
 }

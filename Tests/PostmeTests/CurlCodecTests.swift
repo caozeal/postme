@@ -10,7 +10,7 @@ import XCTest
 final class CurlCodecTests: XCTestCase {
 
     private func only(_ command: String, file: StaticString = #filePath, line: UInt = #line) throws -> APIRequest {
-        let result = try CurlCodec.decode(command)
+        let result = try CurlCodec.decode(command, l10n: .zhHans)
         XCTAssertEqual(result.requests.count, 1, "应解析出 1 个请求", file: file, line: line)
         return result.requests[0]
     }
@@ -187,7 +187,7 @@ final class CurlCodecTests: XCTestCase {
     // MARK: - multipart
 
     func testFormFieldsBecomeMultipart() throws {
-        let result = try CurlCodec.decode(#"curl 'https://api.demo.com/up' -F 'note=hi there' -F 'f=@/tmp/a.png'"#)
+        let result = try CurlCodec.decode(#"curl 'https://api.demo.com/up' -F 'note=hi there' -F 'f=@/tmp/a.png'"#, l10n: .zhHans)
         let request = try XCTUnwrap(result.requests.first)
         XCTAssertEqual(request.bodyKind, .multipart)
         XCTAssertEqual(request.formFields.first?.value, "hi there")
@@ -214,14 +214,14 @@ final class CurlCodecTests: XCTestCase {
         let result = try CurlCodec.decode("""
         curl 'https://api.demo.com/a' -H 'X-1: a'
         curl 'https://api.demo.com/b' -d 'k=v'
-        """)
+        """, l10n: .zhHans)
         XCTAssertEqual(result.requests.count, 2)
         XCTAssertEqual(result.requests.map(\.url), ["https://api.demo.com/a", "https://api.demo.com/b"])
         XCTAssertEqual(result.requests[1].method, .post)
     }
 
     func testNextSplitsOneCommandIntoTwoRequests() throws {
-        let result = try CurlCodec.decode("curl 'https://api.demo.com/one' --next -X POST 'https://api.demo.com/two' -d 'a=1'")
+        let result = try CurlCodec.decode("curl 'https://api.demo.com/one' --next -X POST 'https://api.demo.com/two' -d 'a=1'", l10n: .zhHans)
         XCTAssertEqual(result.requests.map(\.method), [.get, .post])
         XCTAssertEqual(result.requests.map(\.url), ["https://api.demo.com/one", "https://api.demo.com/two"])
     }
@@ -246,7 +246,7 @@ final class CurlCodecTests: XCTestCase {
         curl 'https://api.demo.com/a'
 
         curl 'https://api.demo.com/b'
-        """)
+        """, l10n: .zhHans)
         XCTAssertEqual(result.requests.count, 2)
     }
 
@@ -260,13 +260,13 @@ final class CurlCodecTests: XCTestCase {
     }
 
     func testMissingSchemeFallsBackToHTTPWithWarning() throws {
-        let result = try CurlCodec.decode("curl localhost:8080/ping")
+        let result = try CurlCodec.decode("curl localhost:8080/ping", l10n: .zhHans)
         XCTAssertEqual(result.requests.first?.url, "http://localhost:8080/ping")
         XCTAssertTrue(result.warnings.contains { $0.contains("协议") }, "\(result.warnings)")
     }
 
     func testUnsupportedMethodFallsBackToPost() throws {
-        let result = try CurlCodec.decode("curl -X TRACE 'https://api.demo.com/x' -d 'a=1'")
+        let result = try CurlCodec.decode("curl -X TRACE 'https://api.demo.com/x' -d 'a=1'", l10n: .zhHans)
         XCTAssertEqual(result.requests.first?.method, .post)
         XCTAssertTrue(result.warnings.contains { $0.contains("TRACE") }, "\(result.warnings)")
     }
@@ -274,14 +274,14 @@ final class CurlCodecTests: XCTestCase {
     // MARK: - 提示
 
     func testGlobalOnlyFlagsWarnInsteadOfSilentlyDropping() throws {
-        let result = try CurlCodec.decode("curl -k -L -m 5 --proxy http://p:8080 'https://api.demo.com/x'")
+        let result = try CurlCodec.decode("curl -k -L -m 5 --proxy http://p:8080 'https://api.demo.com/x'", l10n: .zhHans)
         XCTAssertEqual(result.requests.count, 1)
         XCTAssertEqual(result.requests[0].url, "https://api.demo.com/x", "全局选项的取值不该被当成地址")
         XCTAssertEqual(result.warnings.count, 4, "\(result.warnings)")
     }
 
     func testWarningsAreDeduplicated() throws {
-        let result = try CurlCodec.decode("curl -k 'https://api.demo.com/a'\ncurl -k 'https://api.demo.com/b'")
+        let result = try CurlCodec.decode("curl -k 'https://api.demo.com/a'\ncurl -k 'https://api.demo.com/b'", l10n: .zhHans)
         XCTAssertEqual(result.requests.count, 2)
         XCTAssertEqual(result.warnings.filter { $0.contains("-k") }.count, 1, "\(result.warnings)")
     }
@@ -295,25 +295,25 @@ final class CurlCodecTests: XCTestCase {
     // MARK: - 失败路径
 
     func testRejectsEmptyInput() {
-        XCTAssertThrowsError(try CurlCodec.decode("   \n  "))
+        XCTAssertThrowsError(try CurlCodec.decode("   \n  ", l10n: .zhHans))
         XCTAssertFalse(CurlCodec.looksLikeCommand("   "))
     }
 
     func testRejectsTextWithoutCommand() {
-        XCTAssertThrowsError(try CurlCodec.decode("hello world"))
+        XCTAssertThrowsError(try CurlCodec.decode("hello world", l10n: .zhHans))
         XCTAssertFalse(CurlCodec.looksLikeCommand("wget https://api.demo.com/x"))
         XCTAssertTrue(CurlCodec.looksLikeCommand("curl 'https://api.demo.com/x'"))
     }
 
     func testRejectsCommandWithoutURL() {
-        XCTAssertThrowsError(try CurlCodec.decode("curl -X POST -H 'X-A: 1'"))
+        XCTAssertThrowsError(try CurlCodec.decode("curl -X POST -H 'X-A: 1'", l10n: .zhHans))
     }
 
     func testRejectsUnterminatedQuote() {
-        XCTAssertThrowsError(try CurlCodec.decode("curl 'https://api.demo.com/x"))
+        XCTAssertThrowsError(try CurlCodec.decode("curl 'https://api.demo.com/x", l10n: .zhHans))
     }
 
     func testRejectsMissingFlagValue() {
-        XCTAssertThrowsError(try CurlCodec.decode("curl 'https://api.demo.com/x' -H"))
+        XCTAssertThrowsError(try CurlCodec.decode("curl 'https://api.demo.com/x' -H", l10n: .zhHans))
     }
 }

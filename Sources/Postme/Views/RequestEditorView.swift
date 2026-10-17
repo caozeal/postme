@@ -30,7 +30,7 @@ struct RequestEditorView: View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
-            Text("以下变量未定义，已按原文发出：")
+            Text(app.t(.unresolvedVariablesBanner))
             Text(app.unresolvedVariables.map { "{{\($0)}}" }.joined(separator: "  "))
                 .font(.system(size: 11, design: .monospaced))
             Spacer()
@@ -70,9 +70,9 @@ struct RequestEditorView: View {
         Button {
             app.beginSave()
         } label: {
-            Label("保存", systemImage: "square.and.arrow.down")
+            Label(app.t(.saveButton), systemImage: "square.and.arrow.down")
         }
-        .help(app.editingNodeID != nil ? "覆盖保存到当前项目 (⌘S)" : "保存到当前项目 (⌘S)")
+        .help(app.editingNodeID != nil ? app.t(.saveHelpOverwrite) : app.t(.saveHelpNew))
     }
 
     private var methodMenu: some View {
@@ -118,14 +118,14 @@ struct RequestEditorView: View {
                 } else {
                     Image(systemName: "paperplane.fill")
                 }
-                Text(app.isSending ? "取消" : "发送")
+                Text(app.isSending ? app.t(.cancelButton) : app.t(.sendButton))
             }
             .frame(minWidth: 64)
         }
         .buttonStyle(.borderedProminent)
         .tint(app.isSending ? .red : nil)
         .disabled(!app.isSending && app.draft.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .help(app.isSending ? "取消请求 (⌘.)" : "发送请求 (⌘↩)")
+        .help(app.isSending ? app.t(.cancelSendHelp) : app.t(.sendHelp))
     }
 
     // MARK: - 分页
@@ -170,8 +170,8 @@ struct RequestEditorView: View {
         case .headers:
             KeyValueEditor(
                 items: $app.draft.headers,
-                keyPlaceholder: "Header 名",
-                valuePlaceholder: "Header 值"
+                keyPlaceholder: app.t(.headerKeyPlaceholder),
+                valuePlaceholder: app.t(.headerValuePlaceholder)
             )
         case .body:
             BodyEditor(draft: $app.draft)
@@ -192,18 +192,18 @@ struct RequestEditorView: View {
     private var saveSheet: some View {
         @Bindable var app = app
         return VStack(alignment: .leading, spacing: 14) {
-            Text("保存请求").font(.headline)
+            Text(app.t(.saveRequestTitle)).font(.headline)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("名称").font(.system(size: 11)).foregroundStyle(.secondary)
-                TextField("请求名称", text: $app.saveSheetName)
+                Text(app.t(.nameLabel)).font(.system(size: 11)).foregroundStyle(.secondary)
+                TextField(app.t(.requestNamePlaceholder), text: $app.saveSheetName)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 340)
                     .onSubmit { app.commitSaveSheet() }
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("保存到项目").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(app.t(.saveToProjectLabel)).font(.system(size: 11)).foregroundStyle(.secondary)
                 Picker("", selection: $app.saveSheetProjectID) {
                     ForEach(app.projects) { project in
                         Text(project.name).tag(UUID?.some(project.id))
@@ -214,9 +214,9 @@ struct RequestEditorView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("文件夹").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(app.t(.folderLabel)).font(.system(size: 11)).foregroundStyle(.secondary)
                 Picker("", selection: $app.saveSheetFolderID) {
-                    Text("项目根目录").tag(UUID?.none)
+                    Text(app.t(.projectRootOption)).tag(UUID?.none)
                     ForEach(app.saveSheetFolderOptions, id: \.id) { option in
                         Text(option.path).tag(UUID?.some(option.id))
                     }
@@ -227,8 +227,8 @@ struct RequestEditorView: View {
 
             HStack {
                 Spacer()
-                Button("取消") { app.cancelSaveSheet() }
-                Button("保存") { app.commitSaveSheet() }
+                Button(app.t(.cancelButton)) { app.cancelSaveSheet() }
+                Button(app.t(.saveButton)) { app.commitSaveSheet() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(app.saveSheetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -240,16 +240,21 @@ struct RequestEditorView: View {
 // MARK: - Params 面板
 
 private struct ParamsPane: View {
+    @Environment(AppState.self) private var app
     @Binding var queryParams: [KeyValueItem]
     let previewURL: String
 
     var body: some View {
         VStack(spacing: 0) {
-            KeyValueEditor(items: $queryParams, keyPlaceholder: "参数名", valuePlaceholder: "参数值")
+            KeyValueEditor(
+                items: $queryParams,
+                keyPlaceholder: app.t(.paramsKeyPlaceholder),
+                valuePlaceholder: app.t(.paramsValuePlaceholder)
+            )
             if !previewURL.isEmpty {
                 Divider()
                 HStack(alignment: .top, spacing: 8) {
-                    Text("最终 URL")
+                    Text(app.t(.finalURLLabel))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Text(previewURL)
@@ -268,6 +273,7 @@ private struct ParamsPane: View {
 // MARK: - Body 面板
 
 private struct BodyEditor: View {
+    @Environment(AppState.self) private var app
     @Binding var draft: APIRequest
 
     var body: some View {
@@ -282,7 +288,7 @@ private struct BodyEditor: View {
         HStack(spacing: 8) {
             Picker("", selection: $draft.bodyKind) {
                 ForEach(BodyKind.allCases) { kind in
-                    Text(kind.displayName).tag(kind)
+                    Text(kind.displayName(app.t)).tag(kind)
                 }
             }
             .labelsHidden()
@@ -299,12 +305,12 @@ private struct BodyEditor: View {
 
             if draft.bodyKind == .json {
                 jsonStatus
-                Button("格式化") {
+                Button(app.t(.formatButton)) {
                     if let pretty = JSONTools.pretty(draft.bodyText) { draft.bodyText = pretty }
                 }
                 .disabled(draft.bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                Button("压缩") {
+                Button(app.t(.minifyButton)) {
                     if let minified = JSONTools.minify(draft.bodyText) { draft.bodyText = minified }
                 }
                 .disabled(draft.bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -319,11 +325,11 @@ private struct BodyEditor: View {
         let text = draft.bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
             if JSONTools.isValid(text) {
-                Label("合法 JSON", systemImage: "checkmark.circle.fill")
+                Label(app.t(.validJSON), systemImage: "checkmark.circle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(Color(red: 0.16, green: 0.63, blue: 0.32))
             } else {
-                Label("JSON 语法有误", systemImage: "exclamationmark.triangle.fill")
+                Label(app.t(.invalidJSON), systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(Color(red: 0.85, green: 0.35, blue: 0.15))
             }
@@ -334,7 +340,7 @@ private struct BodyEditor: View {
     private var content: some View {
         switch draft.bodyKind {
         case .none:
-            emptyHint("该请求不带请求体。")
+            emptyHint(app.t(.emptyBodyHint))
         case .json, .rawText:
             // 仅 JSON 模式着色：Raw Text 是任意文本，套 JSON 规则会误染。
             CodeTextView(text: $draft.bodyText, highlightJSON: draft.bodyKind == .json)
@@ -343,7 +349,7 @@ private struct BodyEditor: View {
                 if draft.bodyKind == .multipart {
                     HStack(spacing: 6) {
                         Image(systemName: "info.circle")
-                        Text("v1 仅支持文本字段，暂不支持文件上传。")
+                        Text(app.t(.multipartHint))
                         Spacer()
                     }
                     .font(.system(size: 11))
@@ -352,7 +358,11 @@ private struct BodyEditor: View {
                     .padding(.vertical, 6)
                     Divider()
                 }
-                KeyValueEditor(items: $draft.formFields, keyPlaceholder: "字段名", valuePlaceholder: "字段值")
+                KeyValueEditor(
+                    items: $draft.formFields,
+                    keyPlaceholder: app.t(.formFieldKeyPlaceholder),
+                    valuePlaceholder: app.t(.formFieldValuePlaceholder)
+                )
             }
         }
     }

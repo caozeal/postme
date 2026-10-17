@@ -66,7 +66,7 @@ final class PostmanCodecTests: XCTestCase {
     """
 
     func testImportBasicStructure() throws {
-        let result = try PostmanCodec.decode(Data(importJSON.utf8))
+        let result = try PostmanCodec.decode(Data(importJSON.utf8), l10n: .zhHans)
         XCTAssertEqual(result.collectionName, "示例集合")
         XCTAssertEqual(result.requestCount, 4)
         XCTAssertEqual(result.nodes.count, 3)
@@ -75,7 +75,7 @@ final class PostmanCodecTests: XCTestCase {
     }
 
     func testImportFolderAndRequestFields() throws {
-        let result = try PostmanCodec.decode(Data(importJSON.utf8))
+        let result = try PostmanCodec.decode(Data(importJSON.utf8), l10n: .zhHans)
 
         let folder = result.nodes.first
         XCTAssertEqual(folder?.isFolder, true)
@@ -90,7 +90,7 @@ final class PostmanCodecTests: XCTestCase {
     }
 
     func testImportBodyKinds() throws {
-        let result = try PostmanCodec.decode(Data(importJSON.utf8))
+        let result = try PostmanCodec.decode(Data(importJSON.utf8), l10n: .zhHans)
 
         let create = result.nodes.first?.children?.last?.savedRequest
         XCTAssertEqual(create?.request.bodyKind, .json)
@@ -106,9 +106,9 @@ final class PostmanCodecTests: XCTestCase {
     }
 
     func testImportRejectsNonCollectionAndEmpty() {
-        XCTAssertThrowsError(try PostmanCodec.decode(Data(#"{"foo":1}"#.utf8)))
-        XCTAssertThrowsError(try PostmanCodec.decode(Data("不是 json".utf8)))
-        XCTAssertThrowsError(try PostmanCodec.decode(Data(#"{"info":{"name":"空"},"item":[]}"#.utf8)))
+        XCTAssertThrowsError(try PostmanCodec.decode(Data(#"{"foo":1}"#.utf8), l10n: .zhHans))
+        XCTAssertThrowsError(try PostmanCodec.decode(Data("不是 json".utf8), l10n: .zhHans))
+        XCTAssertThrowsError(try PostmanCodec.decode(Data(#"{"info":{"name":"空"},"item":[]}"#.utf8), l10n: .zhHans))
     }
 
     func testGraphQLBodyIsNotSilentlyDropped() throws {
@@ -127,7 +127,7 @@ final class PostmanCodecTests: XCTestCase {
             ]]
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
-        let result = try PostmanCodec.decode(data)
+        let result = try PostmanCodec.decode(data, l10n: .zhHans)
         let req = result.nodes.first?.savedRequest?.request
         XCTAssertEqual(req?.bodyKind, .json)
         XCTAssertTrue(req?.bodyText.contains("query { a }") == true)
@@ -178,7 +178,7 @@ final class PostmanCodecTests: XCTestCase {
             project: Project(name: "导出项目", children: nodes),
             environment: APIEnvironment(name: "env", variables: [KeyValueItem(key: "baseUrl", value: "https://api.demo.com")])
         )
-        let back = try PostmanCodec.decode(data)
+        let back = try PostmanCodec.decode(data, l10n: .zhHans)
 
         XCTAssertEqual(back.collectionName, "导出项目")
         XCTAssertEqual(back.requestCount, 1)
@@ -200,7 +200,7 @@ final class PostmanCodecTests: XCTestCase {
             project: Project(name: "xml 项目", children: [.request(.init(name: "xml", request: rawReq))]),
             environment: nil
         )
-        let back = try PostmanCodec.decode(data)
+        let back = try PostmanCodec.decode(data, l10n: .zhHans)
         let backReq = back.nodes.first?.savedRequest?.request
         XCTAssertEqual(backReq?.rawContentType, "application/xml")
         XCTAssertEqual(backReq?.bodyText, "<a/>")
@@ -220,7 +220,7 @@ final class PostmanCodecTests: XCTestCase {
         let info = root?["info"] as? [String: Any]
         XCTAssertEqual(info?["name"] as? String, "我的项目")
 
-        let back = try PostmanCodec.decode(data)
+        let back = try PostmanCodec.decode(data, l10n: .zhHans)
         // 包一层同名文件夹是 AppState.importPostmanCollection 的职责（现在是建同名项目），往返结构因此稳定。
         let project = Project(name: back.collectionName, children: back.nodes)
         XCTAssertEqual(project.name, "我的项目")
