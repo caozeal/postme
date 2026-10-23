@@ -42,6 +42,9 @@ struct PostmeApp: App {
                 Button(app.t(.menuImportPostman)) { FileActions.importPostman(into: app) }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
 
+                Button(app.t(.menuImportOpenAPI)) { FileActions.importOpenAPI(into: app) }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+
                 Button(app.t(.menuExportPostman)) { FileActions.exportPostman(from: app) }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
             }
@@ -63,6 +66,9 @@ struct PostmeApp: App {
 
                 Button(app.t(.menuSearchRequests)) { app.requestSearchFocus() }
                     .keyboardShortcut("f", modifiers: .command)
+
+                Button(app.t(.menuFindInResponse)) { app.requestResponseFind() }
+                    .keyboardShortcut("f", modifiers: [.command, .option])
             }
         }
 

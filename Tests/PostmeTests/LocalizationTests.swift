@@ -247,9 +247,10 @@ final class LocalizationTests: XCTestCase {
             XCTAssertFalse(enText.contains("「"), "英文提示不该带中文引号：\(enText)")
         }
 
-        // 文件字段占位值同样本地化。
-        XCTAssertEqual(zh.requests[0].formFields.first?.value, "（文件字段，v1 不支持）")
-        XCTAssertEqual(en.requests[0].formFields.first?.value, L10nTable.en[.curlFileFieldPlaceholder])
+        // 文件字段现在是正式能力：路径原样保留，占位文案不再出现。
+        XCTAssertEqual(zh.requests[0].fileFields.first?.name, "f")
+        XCTAssertEqual(zh.requests[0].fileFields.first?.path, "/tmp/a.png")
+        XCTAssertEqual(en.requests[0].fileFields.first?.path, "/tmp/a.png")
 
         // 无路径段时用主机名；无主机时兜底名走语言表。
         let bare = try CurlCodec.decode("curl -X POST 'https://'", l10n: .en)
@@ -306,9 +307,11 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(BodyKind.json.displayName(.en), "JSON")
         XCTAssertEqual(BodyKind.formURLEncoded.displayName(.en), "Form URL Encoded")
         XCTAssertEqual(BodyKind.multipart.displayName(.zhHans), L10nTable.zhHans[.bodyKindMultipart])
-        XCTAssertEqual(RequestTab.headers.title(.en), "Headers")
-        XCTAssertEqual(RequestTab.headers.title(.zhHans), "Headers")
-        XCTAssertEqual(ResponseTab.timing.title(.en), "Timing")
-        XCTAssertEqual(ResponseTab.timing.title(.zhHans), "耗时")
+        XCTAssertEqual(RequestSection.headers.title(.en), "Headers")
+        XCTAssertEqual(RequestSection.headers.title(.zhHans), "Headers")
+        XCTAssertEqual(ResponseSection.timing.title(.en), "Timing")
+        XCTAssertEqual(ResponseSection.timing.title(.zhHans), "耗时")
+        XCTAssertEqual(ResponseSection.llm.title(.en), "Model Output")
+        XCTAssertEqual(ResponseSection.llm.title(.zhHans), "大模型输出")
     }
 }

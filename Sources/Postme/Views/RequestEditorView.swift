@@ -13,6 +13,10 @@ struct RequestEditorView: View {
                 unresolvedBanner
                 Divider()
             }
+            if !app.unresolvedPathParams.isEmpty {
+                unresolvedPathParamsBanner
+                Divider()
+            }
             tabBar
             Divider()
             content
@@ -23,6 +27,25 @@ struct RequestEditorView: View {
         .onChange(of: app.draft) { _, _ in
             app.persistDraft()
         }
+        // URL 是路径参数的唯一真相：新增/删除占位符时同步参数行。
+        .onAppear { app.syncPathParams(prune: true) }
+        .onChange(of: app.draft.url) { _, _ in app.syncPathParams(prune: false) }
+        .onChange(of: app.activeTabID) { _, _ in app.syncPathParams(prune: true) }
+    }
+
+    /// 上一次发送中存在未填写的路径参数时的提示。
+    private var unresolvedPathParamsBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(app.t(.unresolvedPathParamsBanner))
+            Text(app.unresolvedPathParams.map { "{\($0)}" }.joined(separator: "  "))
+                .font(.system(size: 11, design: .monospaced))
+            Spacer()
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     /// 上一次发送中存在未解析变量时的提示。
@@ -59,11 +82,25 @@ struct RequestEditorView: View {
                 )
                 .onSubmit { Task { await app.send() } }
 
+            copyCurlButton
             saveButton
             sendButton
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// 图标按钮：请求栏已经够挤（方法、URL、保存、发送），「复制为 cURL」的文字
+    /// 占的宽度比它的使用频率高得多。文字移到 tooltip / 无障碍标签里。
+    private var copyCurlButton: some View {
+        Button {
+            FileActions.copyAsCurl(from: app, request: app.draft)
+        } label: {
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+        }
+        .disabled(app.draft.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .help(app.t(.copyCurlHelp))
+        .accessibilityLabel(app.t(.copyCurlButton))
     }
 
     private var saveButton: some View {
@@ -133,8 +170,8 @@ struct RequestEditorView: View {
     private var tabBar: some View {
         @Bindable var app = app
         return HStack(spacing: 10) {
-            Picker("", selection: $app.requestTab) {
-                ForEach(RequestTab.allCases) { tab in
+            Picker("", selection: $app.requestSection) {
+                ForEach(RequestSection.allCases) { tab in
                     Text(tabLabel(tab)).tag(tab)
                 }
             }
@@ -148,7 +185,7 @@ struct RequestEditorView: View {
         .padding(.vertical, 8)
     }
 
-    private func tabLabel(_ tab: RequestTab) -> String {
+    private func tabLabel(_ tab: RequestSection) -> String {
         switch tab {
         case .params:
             let n = app.draft.queryParams.filter { $0.isEnabled && !$0.key.isEmpty }.count
@@ -158,15 +195,26 @@ struct RequestEditorView: View {
             return n > 0 ? "Headers (\(n))" : "Headers"
         case .body:
             return "Body"
+        case .auth:
+            // 已配置认证时带一个点：切到别的页签后也能一眼看出「这格带着凭据」。
+            let title = app.t(.requestTabAuth)
+            return app.draft.auth.isConfigured ? "\(title) •" : title
+        case .cookies:
+            let title = app.t(.requestTabCookies)
+            return app.hasManualCookies ? "\(title) •" : title
         }
     }
 
     @ViewBuilder
     private var content: some View {
         @Bindable var app = app
-        switch app.requestTab {
+        switch app.requestSection {
         case .params:
-            ParamsPane(queryParams: $app.draft.queryParams, previewURL: effectiveURLPreview)
+            ParamsPane(
+                queryParams: $app.draft.queryParams,
+                pathParams: $app.draft.pathParams,
+                previewURL: effectiveURLPreview
+            )
         case .headers:
             KeyValueEditor(
                 items: $app.draft.headers,
@@ -175,6 +223,10 @@ struct RequestEditorView: View {
             )
         case .body:
             BodyEditor(draft: $app.draft)
+        case .auth:
+            AuthPane(l10n: app.t, auth: $app.draft.auth)
+        case .cookies:
+            CookiePane(l10n: app.t, cookies: $app.draft.cookies)
         }
     }
 
@@ -242,10 +294,16 @@ struct RequestEditorView: View {
 private struct ParamsPane: View {
     @Environment(AppState.self) private var app
     @Binding var queryParams: [KeyValueItem]
+    @Binding var pathParams: [KeyValueItem]
     let previewURL: String
 
     var body: some View {
         VStack(spacing: 0) {
+            let activeNames = Set(PathParams.placeholders(in: app.draft.url))
+            if !pathParams.filter({ activeNames.contains($0.key) }).isEmpty {
+                PathParamEditor(items: $pathParams, activeNames: activeNames)
+                Divider()
+            }
             KeyValueEditor(
                 items: $queryParams,
                 keyPlaceholder: app.t(.paramsKeyPlaceholder),
@@ -296,8 +354,8 @@ private struct BodyEditor: View {
 
             Spacer()
 
-            if draft.bodyKind == .rawText {
-                TextField("Content-Type", text: $draft.rawContentType)
+            if draft.bodyKind == .rawText || draft.bodyKind == .binary {
+                TextField("Content-Type", text: draft.bodyKind == .binary ? $draft.binaryContentType : $draft.rawContentType)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12, design: .monospaced))
                     .frame(width: 200)
@@ -344,6 +402,8 @@ private struct BodyEditor: View {
         case .json, .rawText:
             // 仅 JSON 模式着色：Raw Text 是任意文本，套 JSON 规则会误染。
             CodeTextView(text: $draft.bodyText, highlightJSON: draft.bodyKind == .json)
+        case .binary:
+            BinaryBodyEditor(draft: $draft)
         case .formURLEncoded, .multipart:
             VStack(spacing: 0) {
                 if draft.bodyKind == .multipart {
@@ -363,6 +423,22 @@ private struct BodyEditor: View {
                     keyPlaceholder: app.t(.formFieldKeyPlaceholder),
                     valuePlaceholder: app.t(.formFieldValuePlaceholder)
                 )
+                .frame(maxHeight: draft.bodyKind == .multipart ? 220 : nil)
+                if draft.bodyKind == .multipart {
+                    Divider()
+                    HStack(spacing: 6) {
+                        Text(app.t(.multipartFilesHeader))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    Divider()
+                    FileFieldEditor(items: $draft.fileFields)
+                        .frame(maxHeight: 220)
+                    Spacer(minLength: 0)
+                }
             }
         }
     }

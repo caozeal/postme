@@ -93,21 +93,21 @@ final class ProjectLevelTests: XCTestCase {
         XCTAssertNil(app.selectedNodeID)
     }
 
-    func testDeleteProjectCancelsPendingDraftConflict() {
+    func testDeleteProjectUnbindsTabsPointingIntoIt() {
         let (app, dir) = makeApp()
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = app.newProject(name: "B")
-        let firstID = saveRequest(app, name: "one", url: "https://one")
-        app.draft = APIRequest()
-        saveRequest(app, name: "two", url: "https://two")
+        let nodeID = saveRequest(app, name: "one", url: "https://one")
+        XCTAssertEqual(app.editingNodeID, nodeID)
 
-        app.draft.url = "https://unsaved-work"
-        app.openSavedRequest(app.activeProject!.children.first { $0.id == firstID }!)
-        XCTAssertTrue(app.showDraftConflict)
+        app.deleteProject(id: app.projects.first { $0.name == "B" }!.id)
 
-        app.deleteProject(id: app.activeProject!.id)
-        XCTAssertFalse(app.showDraftConflict, "挂起动作针对的节点刚被删掉，继续挂着没有意义")
-        XCTAssertNil(app.pendingDraftAction)
+        // B 整个消失：指向 B 里节点的页签必须降级成「新请求」，
+        // 否则 ⌘S 在 findNode 里找不到节点、静默什么都不做。
+        XCTAssertNil(app.editingNodeID)
+        XCTAssertEqual(app.draft.url, "https://one", "页签里的内容留着，用户还能另存")
+        app.beginSave()
+        XCTAssertTrue(app.showSaveSheet)
     }
 
     // MARK: - 切换项目：瞬态引用必须跟着清
@@ -120,10 +120,15 @@ final class ProjectLevelTests: XCTestCase {
 
         app.selectProject(id: app.projects.first!.id)   // 切回默认项目
         XCTAssertEqual(app.activeProject?.name, "默认项目")
-        XCTAssertNil(app.editingNodeID, "editingNodeID 悬空 → ⌘S 静默无效")
-        XCTAssertNil(app.selectedNodeID)
-        // 草稿本身不被替换——它留在编辑器里，只是不再绑定旧项目的节点
-        XCTAssertEqual(app.draft.url, "https://one")
+        XCTAssertNil(app.selectedNodeID, "选中的节点不在当前项目的树里，不能继续高亮")
+        // 编辑器与侧栏同属一个项目上下文：切走后右侧重置——B 的页签关闭，
+        // 换成一个空页签。否则会出现「侧栏是 A 项目、编辑器里是 B 项目的请求」，
+        // 发送/保存都对着看不见的目录树操作。
+        XCTAssertEqual(app.tabs.count, 1)
+        XCTAssertNil(app.editingNodeID)
+        XCTAssertTrue(app.draft.url.isEmpty, "右侧应清空，不残留上一个项目的请求")
+        app.beginSave()
+        XCTAssertTrue(app.showSaveSheet, "空页签没有归属，⌘S 应弹窗命名")
         _ = nodeID
     }
 

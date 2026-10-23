@@ -41,9 +41,9 @@ final class WorkspaceSchemaToleranceTests: XCTestCase {
         XCTAssertNoThrow(try decode(#"{"environments":[]}"#))
     }
 
-    func testMissingOptionalDraftAndActiveEnvironment() throws {
+    func testMissingOptionalTabsAndActiveEnvironment() throws {
         let ws = try decode(#"{"version":1,"collections":[],"environments":[],"history":[],"settings":{"timeout":5,"followRedirects":false,"allowInsecureTLS":true}}"#)
-        XCTAssertNil(ws.draft)
+        XCTAssertTrue(ws.tabs.isEmpty, "旧文件没有 tabs：空数组交给 AppState 补一个空页签")
         XCTAssertNil(ws.activeEnvironmentID)
         XCTAssertEqual(ws.settings.timeout, 5)
         XCTAssertFalse(ws.settings.followRedirects)
@@ -281,7 +281,7 @@ final class WorkspaceSchemaToleranceTests: XCTestCase {
         }
     }
 
-    func testLiveWorkspaceFileShapeStillDecodes() throws {
+    func testLiveWorkspaceCoreStillDecodes() throws {
         // 用真实编码产物验证：当前版本写出的文件仍能完整读回
         var ws = Workspace()
         ws.projects = [Project(name: "演示", children: [
@@ -290,7 +290,7 @@ final class WorkspaceSchemaToleranceTests: XCTestCase {
         ws.activeProjectID = ws.projects.first?.id
         ws.environments = [APIEnvironment(name: "本地", variables: [KeyValueItem(key: "baseUrl", value: "http://127.0.0.1:18080")])]
         ws.activeEnvironmentID = ws.environments.first?.id
-        ws.draft = APIRequest(name: "草稿", url: "{{baseUrl}}/api/users")
+        ws.tabs = [EditorTab(draft: APIRequest(name: "草稿", url: "{{baseUrl}}/api/users"))]
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -306,6 +306,7 @@ final class WorkspaceSchemaToleranceTests: XCTestCase {
         XCTAssertEqual(back.activeProjectID, ws.activeProjectID)
         XCTAssertEqual(back.environments.first?.name, "本地")
         XCTAssertEqual(back.activeEnvironmentID, ws.activeEnvironmentID)
-        XCTAssertEqual(back.draft?.url, "{{baseUrl}}/api/users")
+        // v5 起页签不在核心文件里，检查它留给侧车（见 `PersistenceService` 的用例）。
+        XCTAssertTrue(back.tabs.isEmpty)
     }
 }

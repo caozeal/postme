@@ -18,8 +18,8 @@ struct KeyValueEditor: View {
             Divider()
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach($items) { $item in
-                        row(item: $item)
+                    ForEach(items) { item in
+                        row(item: binding(for: item.id), id: item.id)
                         Divider()
                     }
                     addRow
@@ -28,22 +28,26 @@ struct KeyValueEditor: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: spacing) {
-            Text(app.t(.keyValueEnabled)).frame(width: controlWidth, alignment: .leading)
-            Text(keyPlaceholder).frame(maxWidth: .infinity, alignment: .leading)
-            Text(valuePlaceholder).frame(maxWidth: .infinity, alignment: .leading)
-            Text("").frame(width: controlWidth)
-        }
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+    /// 按 **id** 取行绑定，不按下标。
+    ///
+    /// 崩溃现场（`Fatal error: Index out of range`，栈顶 `Binding.subscript` →
+    /// `Array._checkSubscript` ← `PlatformTextFieldCoordinator.controlTextDidEndEditing`）：
+    /// 正在编辑某行输入框时切页签，编辑器绑定的数组被换成另一格的（可能更短），
+    /// SwiftUI 在结束编辑时仍按**旧下标**写回 → 越界 SIGTRAP。
+    /// `ForEach($items)` 生成的就是这种下标绑定，所以这里换成逐行按 id 构造：
+    /// 行已经不在数组里就退化成 no-op——既不崩，也不会把 A 格的内容写进 B 格。
+    private func binding(for id: UUID) -> Binding<KeyValueItem> {
+        Binding(
+            get: { items.first { $0.id == id } ?? KeyValueItem(id: id) },
+            set: { updated in
+                guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+                items[index] = updated
+            }
+        )
     }
 
-    private func row(item: Binding<KeyValueItem>) -> some View {
-        let id = item.wrappedValue.id
-        return HStack(spacing: spacing) {
+    private func row(item: Binding<KeyValueItem>, id: UUID) -> some View {
+        HStack(spacing: spacing) {
             Toggle("", isOn: item.isEnabled)
                 .labelsHidden()
                 .toggleStyle(.checkbox)
@@ -72,6 +76,19 @@ struct KeyValueEditor: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 3)
         .contentShape(Rectangle())
+    }
+
+    private var header: some View {
+        HStack(spacing: spacing) {
+            Text(app.t(.keyValueEnabled)).frame(width: controlWidth, alignment: .leading)
+            Text(keyPlaceholder).frame(maxWidth: .infinity, alignment: .leading)
+            Text(valuePlaceholder).frame(maxWidth: .infinity, alignment: .leading)
+            Text("").frame(width: controlWidth)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 
     private var addRow: some View {

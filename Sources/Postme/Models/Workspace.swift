@@ -10,17 +10,33 @@ struct AppSettings: Codable, Hashable {
     /// 容错解码：缺键或未知值都得到 `nil`（回到跟随系统），不让整份工作区作废——
     /// 手改过的 `language` 值不该把用户的项目和环境一起弄丢。
     var language: AppLanguage?
+    /// 侧栏底部的历史区是否展开。默认收起：历史是查证用的，不该一进来就占掉半屏目录树。
+    var historyExpanded: Bool
+    /// 「大模型输出」的自定义字段路径（跨启动保留）。
+    ///
+    /// 容错解码：缺键 → 空数组；非法项**在读取时过滤掉**，不让一个手改坏的路径
+    /// 把整份工作区判成损坏（那样用户的项目和环境会一起消失）。
+    var llmFieldPaths: [String]
+    /// 是否启用会话内 Cookie Jar（保存响应 Set-Cookie，并在后续请求回带）。
+    /// 默认关闭：调试器不该悄悄携带登录态。
+    var cookieJarEnabled: Bool
 
     init(
         timeout: TimeInterval = 30,
         followRedirects: Bool = true,
         allowInsecureTLS: Bool = false,
-        language: AppLanguage? = nil
+        language: AppLanguage? = nil,
+        historyExpanded: Bool = false,
+        llmFieldPaths: [String] = [],
+        cookieJarEnabled: Bool = false
     ) {
         self.timeout = timeout
         self.followRedirects = followRedirects
         self.allowInsecureTLS = allowInsecureTLS
         self.language = language
+        self.historyExpanded = historyExpanded
+        self.llmFieldPaths = llmFieldPaths
+        self.cookieJarEnabled = cookieJarEnabled
     }
 
     /// 容错解码（见 `TolerantDecoding.swift`）。旧版本文件没有 settings 键时
@@ -31,8 +47,24 @@ struct AppSettings: Codable, Hashable {
             timeout: c.tolerant(.timeout, 30),
             followRedirects: c.tolerant(.followRedirects, true),
             allowInsecureTLS: c.tolerant(.allowInsecureTLS, false),
-            language: c.tolerantOptional(.language)
+            language: c.tolerantOptional(.language),
+            historyExpanded: c.tolerant(.historyExpanded, false),
+            llmFieldPaths: Self.sanitizedPaths(c.tolerant(.llmFieldPaths, [String]())),
+            cookieJarEnabled: c.tolerant(.cookieJarEnabled, false)
         )
+    }
+
+    /// 只留下合法路径，保序去重。非法项被静默丢弃（它们是手改文件的产物，不是用户当前意图）。
+    static func sanitizedPaths(_ raw: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for path in raw {
+            guard let canonical = LLMStreamMerger.canonicalPath(
+                path.trimmingCharacters(in: .whitespacesAndNewlines)
+            ) else { continue }
+            if seen.insert(canonical).inserted { result.append(canonical) }
+        }
+        return result
     }
 
     var executorOptions: RequestExecutorOptions {
@@ -58,35 +90,40 @@ struct Workspace: Codable {
     var activeEnvironmentID: UUID?
     var history: [HistoryEntry]
     var settings: AppSettings
-    /// 退出时未保存的编辑中请求（下次启动恢复，避免半成品丢失）。
-    var draft: APIRequest?
-    /// 草稿所属的已保存请求节点 id。
-    ///
-    /// 与 `draft` 一起落盘，否则重启后草稿还在编辑器里、归属却丢了：
-    /// 按 ⌘S 会当成新请求弹窗，每重启一次就多出一条重复请求。
-    var draftNodeID: UUID?
+    /// 打开中的请求页签（v4 起）。空数组表示「上次退出时一个页签都没有」，
+    /// 由 `AppState` 补一个空页签——不变量是编辑器恒有一个可写对象。
+    var tabs: [EditorTab]
+    /// 当前页签 id。nil 或悬空时由 `AppState` 兜底到第一个页签。
+    var activeTabID: UUID?
 
     /// 历史条数上限，避免文件无限增长。
     static let historyLimit = 200
 
     /// 当前工作区格式版本。v2 起字段解码容错（缺键取默认值）；
-    /// v3 起顶层为项目层级（`projects`），旧版 `collections` 载入时迁移。
-    static let currentVersion = 3
+    /// v3 起顶层为项目层级（`projects`）；v4 起编辑器改多页签（`tabs`）；
+    /// v5 起落盘拆成三个文件——`workspace.json` 只存核心（项目/环境/设置），
+    /// 页签与历史分别在 `tabs.json` / `history.json`（见 `PersistenceService`）。
+    /// 解码仍接受 v4 及更早的单文件形状，首次保存时完成迁移。
+    static let currentVersion = 5
 
     /// 能独立证明"这是一个工作区文件"的顶层键。
     ///
     /// 刻意**不含 `version`**：只有 `{"version": N}` 的无关 JSON 不该被当成空工作区
     /// 载入——那样它会被下一次保存直接覆盖，用户既没备份也没提示。
     /// 任何一个真正的 postme 工作区都必然带这些键之一。
-    /// `collections` 是 v3 之前的旧键，保留它旧文件才不会被误判为损坏。
+    /// `collections` 是 v3 之前的旧键、`draft`/`draftNodeID` 是 v4 之前的旧键，
+    /// 保留它们旧文件才不会被误判为损坏。
     private static let identifyingKeys: [CodingKeys] = [
-        .projects, .collections, .environments, .activeEnvironmentID, .history, .settings, .draft, .draftNodeID
+        .projects, .collections, .environments, .activeEnvironmentID, .history, .settings,
+        .tabs, .activeTabID, .draft, .draftNodeID
     ]
 
     /// 手写 `init(from:)` 与 `encode(to:)` 都会抑制 CodingKeys 的自动合成，这里显式声明。
-    /// `collections` 仅用于读取 v3 之前的旧文件，编码时不再写出。
+    /// `collections` / `draft` / `draftNodeID` 仅用于读取旧文件，编码时不再写出。
     enum CodingKeys: String, CodingKey {
-        case version, projects, activeProjectID, collections, environments, activeEnvironmentID, history, settings, draft, draftNodeID
+        case version, projects, activeProjectID, collections, environments, activeEnvironmentID, history, settings
+        case tabs, activeTabID
+        case draft, draftNodeID
     }
 
     init(
@@ -97,8 +134,8 @@ struct Workspace: Codable {
         activeEnvironmentID: UUID? = nil,
         history: [HistoryEntry] = [],
         settings: AppSettings = AppSettings(),
-        draft: APIRequest? = nil,
-        draftNodeID: UUID? = nil
+        tabs: [EditorTab] = [],
+        activeTabID: UUID? = nil
     ) {
         self.version = version
         self.projects = projects
@@ -107,8 +144,8 @@ struct Workspace: Codable {
         self.activeEnvironmentID = activeEnvironmentID
         self.history = history
         self.settings = settings
-        self.draft = draft
-        self.draftNodeID = draftNodeID
+        self.tabs = tabs
+        self.activeTabID = activeTabID
     }
 
     /// 容错解码。
@@ -156,6 +193,24 @@ struct Workspace: Codable {
             projects.contains { $0.id == id } ? id : nil
         } ?? projects.first?.id
 
+        // 页签与旧草稿的权威规则：文件里出现 `tabs` 键（哪怕空数组）就认它，忽略旧键。
+        // v4 之前的文件只有单草稿 `draft` + 归属 `draftNodeID`，迁移成一个页签；
+        // 单个畸形页签由 tolerantLossyArray 丢弃，不影响其余页签。
+        let tabs: [EditorTab]
+        if c.contains(.tabs) {
+            tabs = c.tolerantLossyArray(.tabs)
+        } else if let legacyDraft: APIRequest = c.tolerantOptional(.draft) {
+            tabs = [EditorTab(draft: legacyDraft, nodeID: c.tolerantOptional(.draftNodeID))]
+        } else {
+            tabs = []
+        }
+
+        // 悬空的 activeTabID 落到第一个页签；一个都没有就交给 AppState 补空页签。
+        let storedTabID: UUID? = c.tolerantOptional(.activeTabID)
+        let resolvedTabID = storedTabID.flatMap { id in
+            tabs.contains { $0.id == id } ? id : nil
+        } ?? tabs.first?.id
+
         self.init(
             version: Workspace.currentVersion,
             projects: projects,
@@ -164,15 +219,21 @@ struct Workspace: Codable {
             activeEnvironmentID: c.tolerantOptional(.activeEnvironmentID),
             history: c.tolerant(.history, []),
             settings: c.tolerant(.settings, AppSettings()),
-            draft: c.tolerantOptional(.draft),
-            draftNodeID: c.tolerantOptional(.draftNodeID)
+            tabs: tabs,
+            activeTabID: resolvedTabID
         )
     }
 
-    /// 只写新格式：`projects` + `activeProjectID`，不再写出旧键 `collections`。
+    /// 只写核心节：`projects` + `environments` + `settings`。
     ///
-    /// **为什么必须手写**：CodingKeys 里保留了一个没有存储属性 backing 的键
-    /// （`collections`，仅供读旧文件），Encodable 的合成实现会因此编译失败。
+    /// **为什么不写 `tabs` / `history`**：v5 起这两节各有自己的文件
+    /// （`tabs.json` / `history.json`，见 `PersistenceService`）。核心文件若继续写，
+    /// 每次按键都要把 200 条历史正文重新编码一遍，拆分就白做了。
+    /// 旧键仍然**可读**（见 `init(from:)`），只是不再写出。
+    ///
+    /// **为什么必须手写**：CodingKeys 里保留了没有存储属性 backing 的键
+    /// （`collections` / `draft` / `draftNodeID` / `tabs` / `activeTabID`，仅供读旧文件），
+    /// Encodable 的合成实现会因此编译失败。
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(version, forKey: .version)
@@ -180,10 +241,7 @@ struct Workspace: Codable {
         try c.encodeIfPresent(activeProjectID, forKey: .activeProjectID)
         try c.encode(environments, forKey: .environments)
         try c.encodeIfPresent(activeEnvironmentID, forKey: .activeEnvironmentID)
-        try c.encode(history, forKey: .history)
         try c.encode(settings, forKey: .settings)
-        try c.encodeIfPresent(draft, forKey: .draft)
-        try c.encodeIfPresent(draftNodeID, forKey: .draftNodeID)
     }
 
     /// 最近的历史在前。

@@ -7,6 +7,7 @@ enum BodyKind: String, Codable, CaseIterable, Identifiable {
     case rawText
     case formURLEncoded
     case multipart
+    case binary
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ enum BodyKind: String, Codable, CaseIterable, Identifiable {
         case .rawText: return l10n(.bodyKindRawText)
         case .formURLEncoded: return l10n(.bodyKindFormURLEncoded)
         case .multipart: return l10n(.bodyKindMultipart)
+        case .binary: return l10n(.bodyKindBinary)
         }
     }
 
@@ -29,6 +31,7 @@ enum BodyKind: String, Codable, CaseIterable, Identifiable {
         case .rawText: return "text/plain"
         case .formURLEncoded: return "application/x-www-form-urlencoded"
         case .multipart: return nil
+        case .binary: return "application/octet-stream"
         }
     }
 

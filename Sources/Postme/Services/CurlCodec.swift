@@ -384,6 +384,10 @@ enum CurlCodec {
         var dataParts: [String] = []
         var urlEncoded: [(String, String)] = []
         var forms: [(key: String, value: String, isFile: Bool)] = []
+        /// `--data-binary @file` / `-T file`：二进制文件正文。
+        var binaryFile: String?
+        /// 文件正文来自 `-T`（curl 默认 PUT），而不是 `--data-binary`（默认 POST）。
+        var binaryIsUpload = false
         var user: String?
         var bearer: String?
         var cookies: String?
@@ -459,7 +463,20 @@ enum CurlCodec {
                 state.bearer = try requireValue(flag, value)
 
             // 正文
-            case "-d", "--data", "--data-raw", "--data-ascii", "--data-binary":
+            case "--data-binary":
+                let raw = try requireValue(flag, value)
+                if raw.hasPrefix("@") {
+                    let path = String(raw.dropFirst())
+                    if path.isEmpty || path == "-" {
+                        notes.add(notes.l10n(.curlWarningDataFromFile, flag, raw))
+                    } else {
+                        state.binaryFile = path
+                        state.binaryIsUpload = false
+                    }
+                } else {
+                    state.dataParts.append(raw)
+                }
+            case "-d", "--data", "--data-raw", "--data-ascii":
                 let raw = try requireValue(flag, value)
                 if raw.hasPrefix("@") {
                     notes.add(notes.l10n(.curlWarningDataFromFile, flag, raw))
@@ -502,7 +519,13 @@ enum CurlCodec {
             case "--digest", "--ntlm", "--negotiate", "--anyauth":
                 notes.add(notes.l10n(.curlWarningAuth, flag))
             case "-T", "--upload-file":
-                notes.add(notes.l10n(.curlWarningUpload))
+                let raw = try requireValue(flag, value)
+                if raw.isEmpty || raw == "-" {
+                    notes.add(notes.l10n(.curlWarningUpload))
+                } else {
+                    state.binaryFile = raw
+                    state.binaryIsUpload = true
+                }
             case "--resolve", "--connect-to":
                 notes.add(notes.l10n(.curlWarningResolve, flag))
 
@@ -563,6 +586,8 @@ enum CurlCodec {
             request.queryParams = queryItems(from: query)
         }
         request.url = rawURL + fragment
+        // URL 里的 {id} / :id 自动变成路径参数行（值为空，等用户填）。
+        request.pathParams = PathParams.synchronize(url: request.url, existing: [])
 
         for header in state.headers {
             request.headers.append(KeyValueItem(key: header.0, value: header.1))
@@ -581,8 +606,9 @@ enum CurlCodec {
         }
 
         let hasBody = !state.dataParts.isEmpty || !state.urlEncoded.isEmpty
-            || !state.forms.isEmpty || state.jsonPayload != nil
-        let fallback: HTTPMethod = hasBody ? .post : .get
+            || !state.forms.isEmpty || state.jsonPayload != nil || state.binaryFile != nil
+        // `-T` 的 curl 默认方法是 PUT；`--data-binary` 与其余带正文的参数默认 POST。
+        let fallback: HTTPMethod = state.binaryIsUpload ? .put : (hasBody ? .post : .get)
         let explicit = state.method?.trimmingCharacters(in: .whitespaces).uppercased()
         // `-F` 与 `-G` 同现时 curl 忽略 `-G`（见 applyBody 说明），方法不能定成 GET。
         let isGet = state.isGet && state.forms.isEmpty
@@ -626,21 +652,36 @@ enum CurlCodec {
         if !state.forms.isEmpty {
             request.bodyKind = .multipart
             var fields: [KeyValueItem] = []
-            var warnedFile = false
+            var files: [FileField] = []
             for form in state.forms {
                 if form.isFile {
-                    if !warnedFile {
-                        notes.add(notes.l10n(.curlWarningFileField))
-                        warnedFile = true
+                    // `@file` 是文件上传；`@-` 读 stdin，导入时无法还原。
+                    let path = String(form.value.dropFirst())
+                    if path.isEmpty || path == "-" {
+                        notes.add(notes.l10n(.curlWarningFileField, form.value))
+                    } else {
+                        files.append(FileField(name: form.key, path: path))
                     }
-                    fields.append(KeyValueItem(isEnabled: false, key: form.key, value: notes.l10n(.curlFileFieldPlaceholder)))
                 } else {
                     fields.append(KeyValueItem(key: form.key, value: form.value))
                 }
             }
             request.formFields = fields
+            request.fileFields = files
             if !dataText.isEmpty {
                 notes.add(notes.l10n(.curlWarningFormAndData))
+            }
+            return
+        }
+
+        // `--data-binary @file` / `-T file`：正文来自磁盘文件。
+        if let binaryFile = state.binaryFile {
+            request.bodyKind = .binary
+            request.binaryFilePath = binaryFile
+            if let contentType = request.headers.first(where: {
+                $0.key.lowercased() == "content-type"
+            })?.value, !contentType.isEmpty {
+                request.binaryContentType = contentType
             }
             return
         }
@@ -662,11 +703,13 @@ enum CurlCodec {
 
         if dataText.isEmpty {
             // 空正文：curl 照样带 Content-Type 发出（`--json ''` → application/json + Accept）。
-            if state.jsonPayload != nil {
+            // 显式 `Content-Type: application/json` 同理——判据与有正文时一致，
+            // 否则「导出再导入」会把 Body 从 JSON 降级成「原文」（发出的字节一样，界面含义不同）。
+            if state.jsonPayload != nil || contentType?.contains("json") == true {
                 request.bodyKind = .json
                 request.bodyText = ""
                 request.rawContentType = "application/json"
-                setHeader("Accept", "application/json", on: &request)
+                if state.jsonPayload != nil { setHeader("Accept", "application/json", on: &request) }
                 setHeader("Content-Type", "application/json", on: &request)
             } else {
                 request.bodyKind = .rawText
@@ -750,11 +793,15 @@ enum CurlCodec {
 
     /// `-F 'key=value'`。`@` / `<` 前缀表示读文件；`;type=...` 是 curl 的 part 选项，
     /// postme 的 multipart 不写 part 级 Content-Type，故丢弃。
+    ///
+    /// `--form-string` 走 `allowFile: false`：curl 对它是**字面量**语义——
+    /// `@` 不当文件、`;` 不当 part 选项。这里若照样砍分号，导出的
+    /// `--form-string 'note=a;b=x'` 会被解析成 `a`，服务端收到的就是另一个值。
     private static func parseFormField(_ raw: String, allowFile: Bool) -> (key: String, value: String, isFile: Bool) {
         let parts = raw.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
         let key = String(parts.first ?? "")
         var value = parts.count > 1 ? String(parts[1]) : ""
-        if let semicolon = value.firstIndex(of: ";") {
+        if allowFile, let semicolon = value.firstIndex(of: ";") {
             value = String(value[value.startIndex..<semicolon])
         }
         let isFile = allowFile && (value.hasPrefix("@") || value.hasPrefix("<"))

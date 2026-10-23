@@ -102,7 +102,11 @@ final class PostmanCodecTests: XCTestCase {
 
         let upload = result.nodes[2].savedRequest
         XCTAssertEqual(upload?.request.bodyKind, .multipart)
-        XCTAssertEqual(upload?.request.formFields.last?.isEnabled, false)
+        XCTAssertEqual(upload?.request.formFields.map(\.key), ["note"])
+        let file = upload?.request.fileFields.first
+        XCTAssertEqual(file?.name, "file")
+        // 没有 src 的文件字段保留为禁用行，不能静默消失
+        XCTAssertEqual(file?.isEnabled, false)
     }
 
     func testImportRejectsNonCollectionAndEmpty() {

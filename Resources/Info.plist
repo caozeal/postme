@@ -30,6 +30,19 @@
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.postme.node-id</string>
+            <key>UTTypeDescription</key>
+            <string>postme collection node identifier</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+        </dict>
+    </array>
     <!-- 关键:调试 http://localhost、内网 IP 时 ATS 会拦截明文 HTTP,
          必须放开,否则请求全部失败且报错难定位。 -->
     <key>NSAppTransportSecurity</key>

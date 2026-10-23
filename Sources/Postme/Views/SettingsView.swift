@@ -38,6 +38,11 @@ struct SettingsView: View {
                 Text(app.t(.settingsAllowInsecureTLSHint))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+
+                Toggle(app.t(.cookieJarEnabledLabel), isOn: settings.cookieJarEnabled)
+                Text(app.t(.cookieJarSettingsHint))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
 
             Section(app.t(.settingsStorageSection)) {
@@ -55,17 +60,90 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section(app.t(.settingsLLMPathsSection)) {
+                llmPathsEditor
+
+                Text(app.t(.settingsLLMPathsHint))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
             Section(app.t(.settingsShortcutsSection)) {
                 shortcutRow(app.t(.settingsShortcutSend), "⌘ ↩")
                 shortcutRow(app.t(.settingsShortcutSave), "⌘ S")
                 shortcutRow(app.t(.settingsShortcutNewRequest), "⌘ N")
                 shortcutRow(app.t(.settingsShortcutSearch), "⌘ F")
+                shortcutRow(app.t(.menuFindInResponse), "⌥ ⌘ F")
                 shortcutRow(app.t(.settingsShortcutImport), "⌘ ⇧ I")
                 shortcutRow(app.t(.settingsShortcutExport), "⌘ ⇧ E")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 600)
+        .frame(width: 480, height: 680)
+    }
+
+    // MARK: - 大模型输出字段路径
+
+    @State private var newLLMPath = ""
+    @State private var llmPathError: String?
+
+    /// 列表 + 添加 + 删除。写入口与页签内联入口是同一对方法
+    /// （`addLLMCustomPath` / `removeLLMCustomPath`），两处永远看到同一份配置。
+    @ViewBuilder
+    private var llmPathsEditor: some View {
+        let paths = app.workspace.settings.llmFieldPaths
+
+        if paths.isEmpty {
+            Text(app.t(.settingsLLMPathsEmpty))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(paths, id: \.self) { path in
+                HStack {
+                    Text(path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button {
+                        app.removeLLMCustomPath(path)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderless)
+                    .help(app.t(.llmCustomPathRemoveHelp))
+                }
+            }
+        }
+
+        HStack(spacing: 8) {
+            TextField(app.t(.settingsLLMPathsPlaceholder), text: $newLLMPath)
+                .font(.system(size: 11, design: .monospaced))
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { addLLMPath() }
+            Button(app.t(.settingsLLMPathsAdd)) { addLLMPath() }
+        }
+
+        if let llmPathError {
+            Text(llmPathError)
+                .font(.system(size: 11))
+                .foregroundStyle(Color(red: 0.85, green: 0.25, blue: 0.25))
+        }
+    }
+
+    private func addLLMPath() {
+        let trimmed = newLLMPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard LLMStreamMerger.canonicalPath(trimmed) != nil else {
+            llmPathError = app.t(.llmCustomPathInvalid)
+            return
+        }
+        guard app.addLLMCustomPath(trimmed) else {
+            llmPathError = app.t(.llmCustomPathLimit, LLMStreamMerger.maxCustomPaths)
+            return
+        }
+        llmPathError = nil
+        newLLMPath = ""
     }
 
     /// 语言 Picker 的绑定：写走 `setLanguage`（立即落盘 + 重算响应体文本 + 清掉旧语言提示），

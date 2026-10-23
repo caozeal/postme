@@ -62,6 +62,18 @@ struct APIRequest: Identifiable, Codable, Hashable {
     var rawContentType: String
     /// formURLEncoded / multipart 模式下的表单键值。
     var formFields: [KeyValueItem]
+    /// multipart 模式下的文件字段。
+    var fileFields: [FileField]
+    /// binary 模式下的本地文件路径。
+    var binaryFilePath: String
+    /// binary 模式的 Content-Type。
+    var binaryContentType: String
+    /// 手动 Cookie 行。发送前合并成一个 `Cookie` 头。
+    var cookies: [KeyValueItem]
+    /// RESTful 路径参数（URL 里的 `{name}` / `:name`）。
+    var pathParams: [KeyValueItem]
+    /// 认证配置。发送前由 `AuthApplier` 物化成等效的 Header / Query。
+    var auth: RequestAuth
 
     init(
         id: UUID = UUID(),
@@ -73,7 +85,13 @@ struct APIRequest: Identifiable, Codable, Hashable {
         bodyKind: BodyKind = .none,
         bodyText: String = "",
         rawContentType: String = "text/plain",
-        formFields: [KeyValueItem] = []
+        formFields: [KeyValueItem] = [],
+        fileFields: [FileField] = [],
+        binaryFilePath: String = "",
+        binaryContentType: String = "application/octet-stream",
+        cookies: [KeyValueItem] = [],
+        pathParams: [KeyValueItem] = [],
+        auth: RequestAuth = RequestAuth()
     ) {
         self.id = id
         self.name = name
@@ -85,6 +103,12 @@ struct APIRequest: Identifiable, Codable, Hashable {
         self.bodyText = bodyText
         self.rawContentType = rawContentType
         self.formFields = formFields
+        self.fileFields = fileFields
+        self.binaryFilePath = binaryFilePath
+        self.binaryContentType = binaryContentType
+        self.cookies = cookies
+        self.pathParams = pathParams
+        self.auth = auth
     }
 
     /// 深拷贝一份（换新 id），用于「另存为」或从集合加载到编辑器工作副本。
@@ -94,6 +118,9 @@ struct APIRequest: Identifiable, Codable, Hashable {
         c.headers = headers.map { KeyValueItem(id: UUID(), isEnabled: $0.isEnabled, key: $0.key, value: $0.value) }
         c.queryParams = queryParams.map { KeyValueItem(id: UUID(), isEnabled: $0.isEnabled, key: $0.key, value: $0.value) }
         c.formFields = formFields.map { KeyValueItem(id: UUID(), isEnabled: $0.isEnabled, key: $0.key, value: $0.value) }
+        c.fileFields = fileFields.map { FileField(id: UUID(), isEnabled: $0.isEnabled, name: $0.name, path: $0.path) }
+        c.cookies = cookies.map { KeyValueItem(id: UUID(), isEnabled: $0.isEnabled, key: $0.key, value: $0.value) }
+        c.pathParams = pathParams.map { KeyValueItem(id: UUID(), isEnabled: $0.isEnabled, key: $0.key, value: $0.value) }
         return c
     }
 
@@ -111,7 +138,14 @@ struct APIRequest: Identifiable, Codable, Hashable {
             bodyKind: c.tolerant(.bodyKind, .none),
             bodyText: c.tolerant(.bodyText, ""),
             rawContentType: c.tolerant(.rawContentType, "text/plain"),
-            formFields: c.tolerant(.formFields, [])
+            formFields: c.tolerant(.formFields, []),
+            fileFields: c.tolerant(.fileFields, []),
+            binaryFilePath: c.tolerant(.binaryFilePath, ""),
+            binaryContentType: c.tolerant(.binaryContentType, "application/octet-stream"),
+            cookies: c.tolerant(.cookies, []),
+            pathParams: c.tolerant(.pathParams, []),
+            // 旧文件没有 auth 键：容错解码得到 `.none`，不会让请求变空。
+            auth: c.tolerant(.auth, RequestAuth())
         )
     }
 }

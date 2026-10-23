@@ -4,6 +4,19 @@ import UniformTypeIdentifiers
 /// 文件级操作：导入 / 导出 Postman 集合。
 enum FileActions {
 
+    /// 写剪贴板（唯一实现：请求栏按钮、侧栏右键、菜单三处共用）。
+    @MainActor
+    static func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// 把请求复制成 curl 命令。
+    @MainActor
+    static func copyAsCurl(from app: AppState, request: APIRequest) {
+        copyToPasteboard(app.curlCommand(for: request))
+    }
+
     @MainActor
     static func importPostman(into app: AppState) {
         let panel = NSOpenPanel()
@@ -32,8 +45,30 @@ enum FileActions {
     }
 
     @MainActor
-    static func exportPostman(from app: AppState) {
-        guard let project = app.activeProject else {
+    static func importOpenAPI(into app: AppState) {
+        let panel = NSOpenPanel()
+        // 允许没有 .json 后缀的文件（Springfox 的 `/v2/api-docs` 常被直接存成 `api-docs`）；
+        // 真正的校验交给 JSON 解析器。
+        panel.allowedContentTypes = [.json, .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = app.t(.openAPIOpenPanelMessage)
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let result = try OpenAPICodec.decode(data, l10n: app.t)
+            app.beginOpenAPIImport(result: result, fileName: url.lastPathComponent)
+        } catch let error as OpenAPICodec.CodecError {
+            app.alertMessage = .init(text: error.message(app.t))
+        } catch {
+            app.alertMessage = .init(text: app.t(.openAPIImportFailed, error.localizedDescription))
+        }
+    }
+
+    @MainActor
+    static func exportPostman(from app: AppState) {        guard let project = app.activeProject else {
             app.alertMessage = .init(text: app.t(.exportNoProject))
             return
         }

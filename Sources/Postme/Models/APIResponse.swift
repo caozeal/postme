@@ -116,7 +116,7 @@ struct APIResponse {
         )
     }
 
-    private static func headers(from http: HTTPURLResponse) -> [HTTPHeader] {
+    static func headers(from http: HTTPURLResponse) -> [HTTPHeader] {
         http.allHeaderFields
             .compactMap { key, value -> HTTPHeader? in
                 guard let name = key as? String else { return nil }
@@ -173,6 +173,19 @@ struct APIResponse {
         }
     }
 
+    /// 是否为 `text/event-stream` 响应（按 MIME，为空时回退 `Content-Type` 头）。
+    ///
+    /// 展示层据此决定是否显示「事件」分页、是否跳过 JSON 美化。
+    var isEventStream: Bool {
+        if let mimeType, !mimeType.isEmpty {
+            return ResponseHead.isEventStreamMIME(mimeType)
+        }
+        guard let raw = headers.first(where: { $0.name.lowercased() == "content-type" })?.value else {
+            return false
+        }
+        return ResponseHead.isEventStreamMIME(raw)
+    }
+
     /// 按 MIME 类型判断是否可按文本展示。
     var isTextLike: Bool {
         if let mimeType {
@@ -225,7 +238,9 @@ struct APIResponse {
         }
 
         var text = raw
-        if !truncated, looksLikeJSON, let pretty = JSONTools.pretty(raw) {
+        // SSE 的正文是 `data:` 行拼起来的，JSON 美化会把它整段改写成非协议文本，
+        // 与「事件」分页看到的内容对不上。
+        if !truncated, !isEventStream, looksLikeJSON, let pretty = JSONTools.pretty(raw) {
             text = pretty
         }
         if isBodyTruncated {

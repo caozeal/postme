@@ -16,6 +16,10 @@ struct CodeTextView: NSViewRepresentable {
     var highlightJSON: Bool = false
     /// 编辑态着色的防抖间隔。高亮是"锦上添花"，宁可晚一点也不能拖慢输入。
     var highlightDebounce: Duration = .milliseconds(150)
+    /// 「显示查找条」的触发序号。自增即触发；0 表示不触发。
+    ///
+    /// 用序号而不是 Bool：用户连续按两次 ⌥⌘F 时，第二次也要重新聚焦查找框。
+    var findRequest: Int = 0
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, fontSize: fontSize, debounce: highlightDebounce)
@@ -32,8 +36,15 @@ struct CodeTextView: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.appliedText = text
         context.coordinator.highlightsJSON = highlightJSON
+        context.coordinator.lastFindRequest = findRequest
         if highlightJSON {
             JSONHighlighter.apply(to: textView, fontSize: fontSize)
+        }
+        if findRequest > 0 {
+            // 视图刚插入层级时还没有 window，等一拍再弹查找条。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak coordinator = context.coordinator] in
+                coordinator?.showFindBar()
+            }
         }
         return scrollView
     }
@@ -61,6 +72,11 @@ struct CodeTextView: NSViewRepresentable {
         } else if highlightingChanged {
             // 内容没变但开关翻转：必须显式处理，否则切到 Raw Text 会残留 JSON 配色。
             context.coordinator.applyHighlightNow()
+        }
+
+        if context.coordinator.lastFindRequest != findRequest {
+            context.coordinator.lastFindRequest = findRequest
+            context.coordinator.showFindBar()
         }
     }
 
@@ -109,6 +125,8 @@ struct CodeTextView: NSViewRepresentable {
         var appliedText: String?
         /// 是否着色。由 updateNSView 同步，编辑回调里要用最新值。
         var highlightsJSON = false
+        /// 最近一次已处理的查找触发序号。
+        var lastFindRequest = 0
 
         private let debounce: Duration
         private var pendingHighlight: Task<Void, Never>?
@@ -140,6 +158,18 @@ struct CodeTextView: NSViewRepresentable {
             } else {
                 JSONHighlighter.clear(in: textView, fontSize: fontSize)
             }
+        }
+
+        /// 聚焦正文并弹出系统查找条（带匹配数、上一个 / 下一个）。
+        ///
+        /// `performFindPanelAction` 读的是 sender 的 `tag`，直接传 Int 不生效，
+        /// 所以临时造一个 NSMenuItem 承载动作编号。
+        func showFindBar() {
+            guard let textView, let window = textView.window else { return }
+            window.makeFirstResponder(textView)
+            let item = NSMenuItem()
+            item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+            textView.performFindPanelAction(item)
         }
 
         /// 编辑后防抖着色。

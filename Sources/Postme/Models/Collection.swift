@@ -97,6 +97,37 @@ enum CollectionNode: Identifiable, Codable, Hashable {
         if case .request(let saved) = self { return saved }
         return nil
     }
+
+    /// 当前节点（含自身）是否包含指定 id。
+    ///
+    /// 拖拽校验用：文件夹不能移进自己的子树，也不能插到自己后代的前后。
+    func containsNode(id: UUID) -> Bool {
+        if self.id == id { return true }
+        guard case .folder(let folder) = self else { return false }
+        return folder.children.contains { $0.containsNode(id: id) }
+    }
+}
+
+/// 树节点的拖放目标。
+enum NodeMoveTarget: Equatable {
+    /// 放到某个节点之前（同级）。
+    case before(UUID)
+    /// 放到某个节点之后（同级）。
+    case after(UUID)
+    /// 放进某个文件夹（追加到末尾）。
+    case inside(UUID)
+    /// 追加到项目根目录。
+    case root
+
+    /// 这个目标是否落在某个节点上（用于清理拖放高亮）。
+    func involves(_ id: UUID) -> Bool {
+        switch self {
+        case .before(let target), .after(let target), .inside(let target):
+            return target == id
+        case .root:
+            return false
+        }
+    }
 }
 
 // MARK: - 树操作
@@ -173,10 +204,94 @@ extension Array where Element == CollectionNode {
         return false
     }
 
+    /// 拖拽移动是否合法（不实际修改）。
+    ///
+    /// 规则：
+    /// - 目标必须存在；
+    /// - 不能移到自己的前面 / 后面 / 里面；
+    /// - 文件夹不能移进自己的子树，也不能插到后代的前后（否则会形成环或丢失子树）。
+    func canMoveNode(id: UUID, to target: NodeMoveTarget) -> Bool {
+        guard let node = findNode(id: id) else { return false }
+
+        switch target {
+        case .root:
+            return true
+
+        case .inside(let folderID):
+            guard let folder = findNode(id: folderID), folder.isFolder else { return false }
+            return !node.containsNode(id: folderID)
+
+        case .before(let targetID), .after(let targetID):
+            guard findNode(id: targetID) != nil else { return false }
+            return !node.containsNode(id: targetID)
+        }
+    }
+
+    /// 把节点移动到目标位置。失败时整棵树保持原样。
+    ///
+    /// 先校验、再在副本上「摘除 + 插入」、最后一次性替换：任何一步失败都不会
+    /// 出现「节点已经从原处删掉、却没插进新位置」的丢数据状态。
+    @discardableResult
+    mutating func moveNode(id: UUID, to target: NodeMoveTarget) -> Bool {
+        guard canMoveNode(id: id, to: target), let node = findNode(id: id) else { return false }
+
+        var copy = self
+        guard copy.removeNode(id: id) else { return false }
+
+        switch target {
+        case .root:
+            copy.append(node)
+        case .inside(let folderID):
+            guard copy.insert(node, intoFolder: folderID) else { return false }
+        case .before(let targetID):
+            guard copy.insert(node, before: targetID) else { return false }
+        case .after(let targetID):
+            guard copy.insert(node, after: targetID) else { return false }
+        }
+
+        self = copy
+        return true
+    }
+
+    /// 在指定节点之前插入（同级）。
+    @discardableResult
+    mutating func insert(_ node: CollectionNode, before targetID: UUID) -> Bool {
+        if let index = firstIndex(where: { $0.id == targetID }) {
+            self.insert(node, at: index)
+            return true
+        }
+        for index in indices {
+            if case .folder(var folder) = self[index] {
+                if folder.children.insert(node, before: targetID) {
+                    self[index] = .folder(folder)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /// 在指定节点之后插入（同级）。
+    @discardableResult
+    mutating func insert(_ node: CollectionNode, after targetID: UUID) -> Bool {
+        if let index = firstIndex(where: { $0.id == targetID }) {
+            self.insert(node, at: index + 1)
+            return true
+        }
+        for index in indices {
+            if case .folder(var folder) = self[index] {
+                if folder.children.insert(node, after: targetID) {
+                    self[index] = .folder(folder)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     /// 原地替换已保存请求的内容（保留位置与 id）。
     @discardableResult
-    mutating func replaceSavedRequest(id: UUID, with request: APIRequest) -> Bool {
-        for index in indices {
+    mutating func replaceSavedRequest(id: UUID, with request: APIRequest) -> Bool {        for index in indices {
             if case .request(var saved) = self[index], saved.id == id {
                 var updated = request
                 updated.id = saved.request.id

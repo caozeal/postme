@@ -11,11 +11,17 @@ struct CurlImportSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var text: String = ""
-    @State private var target: Target = .newProject
+    @State private var target: Target = Target.initial
 
     enum Target: String, CaseIterable, Identifiable {
         case newProject
         case currentProject
+
+        /// 打开面板时的默认选项：**并入当前项目**。
+        ///
+        /// 导入的 curl 多半就是当前在调的那个项目的接口；默认新建项目会每次都多出一个
+        /// 项目，用户还得手动把请求挪回去（新建项目仍是一次点击的事）。
+        static let initial: Target = .currentProject
 
         var id: String { rawValue }
 
@@ -124,7 +130,12 @@ struct CurlImportSheet: View {
         case .json: parts.append(app.t(.curlSummaryJSONBody))
         case .rawText: parts.append(app.t(.curlSummaryTextBody))
         case .formURLEncoded: parts.append(app.t(.curlSummaryFormFields, request.formFields.count))
-        case .multipart: parts.append(app.t(.curlSummaryMultipartFields, request.formFields.count))
+        case .multipart:
+            parts.append(app.t(.curlSummaryMultipartFields, request.formFields.count))
+            if !request.fileFields.isEmpty {
+                parts.append(app.t(.curlSummaryFileFields, request.fileFields.count))
+            }
+        case .binary: parts.append(app.t(.curlSummaryBinaryBody))
         }
         return parts.joined(separator: "  ·  ")
     }

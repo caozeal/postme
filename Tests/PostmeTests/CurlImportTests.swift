@@ -69,30 +69,72 @@ final class CurlImportTests: XCTestCase {
 
     // MARK: - 草稿保护
 
-    func testImportKeepsUnsavedDraft() throws {
+    func testImportKeepsUnsavedDraftInItsOwnTab() throws {
         let (app, dir) = makeApp()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         app.draft = APIRequest(name: "草稿", url: "https://draft.local/edited")
+        let draftTab = app.activeTabID
         XCTAssertTrue(app.isDraftDirty)
 
         app.importCurlRequests(try requests(from: "curl 'https://api.demo.com/a'"), target: .newProject(name: "p"))
 
-        XCTAssertEqual(app.draft.url, "https://draft.local/edited", "导入不该动编辑器里的草稿")
-        XCTAssertTrue(app.isDraftDirty)
+        // 自动打开导入的请求，但草稿没被丢：它还在自己那一格里，仍然标着未保存。
+        let kept = app.tabs.first { $0.id == draftTab }!
+        XCTAssertEqual(kept.draft.url, "https://draft.local/edited")
+        XCTAssertTrue(kept.isDirty)
+        XCTAssertEqual(app.draft.url, "https://api.demo.com/a", "导入后应停在导入的请求上")
+        XCTAssertNotEqual(app.activeTabID, draftTab)
     }
 
-    func testImportIntoCurrentProjectDoesNotCancelPendingDraftConflict() throws {
+    /// 导入的请求自动打开，并且侧栏选中它（否则导入完还要自己在树里找一遍）。
+    func testImportOpensFirstImportedRequest() throws {
         let (app, dir) = makeApp()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // 并入当前项目不换侧栏内容，挂起的草稿冲突与它无关，不该被静默吞掉
+        app.importCurlRequests(
+            try requests(from: "curl 'https://api.demo.com/users' -H 'X-A: 1'\ncurl 'https://api.demo.com/orders'"),
+            target: .currentProject
+        )
+
+        guard let node = app.activeProject?.children.first else { return XCTFail("没导入进去") }
+        XCTAssertEqual(app.activeTab.nodeID, node.id, "当前页签应绑定到导入的请求")
+        XCTAssertEqual(app.draft.url, "https://api.demo.com/users")
+        XCTAssertEqual(app.draft.headers.first?.key, "X-A")
+        XCTAssertEqual(app.selectedNodeID, node.id, "侧栏应选中导入的请求")
+
+        // 再打开同一个请求应复用页签，而不是越开越多。
+        let tabsBefore = app.tabs.count
+        app.openSavedRequest(node)
+        XCTAssertEqual(app.tabs.count, tabsBefore)
+    }
+
+    /// 面板默认并入当前项目：默认新建项目会每次多出一个项目，请求还得手动挪。
+    func testImportSheetDefaultsToCurrentProject() {
+        XCTAssertEqual(CurlImportSheet.Target.initial, .currentProject)
+        XCTAssertEqual(CurlImportSheet.Target.allCases.first, .newProject)
+    }
+
+    func testImportIntoCurrentProjectKeepsOpenTabs() throws {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // 并入当前项目不换侧栏内容：原有页签（含未保存的草稿与归属）都不该被动过，
+        // 导入的请求另开一格并成为当前页签。
         app.draft = APIRequest(name: "草稿", url: "https://draft.local/x")
-        app.openSavedRequest(.request(.init(name: "别的请求", request: APIRequest(url: "https://other.local/x"))))
-        XCTAssertTrue(app.showDraftConflict)
+        let tabID = app.activeTabID
+        app.newRequest()
+        app.draft = APIRequest(name: "第二格", url: "https://second.local/x")
+        let secondTabID = app.activeTabID
 
         app.importCurlRequests(try requests(from: "curl 'https://api.demo.com/a'"), target: .currentProject)
-        XCTAssertTrue(app.showDraftConflict, "并入当前项目不该取消挂起的草稿冲突")
+
+        XCTAssertEqual(app.tabs.count, 3)
+        let first = app.tabs.first { $0.id == tabID }!
+        XCTAssertEqual(first.draft.url, "https://draft.local/x")
+        let second = app.tabs.first { $0.id == secondTabID }!
+        XCTAssertEqual(second.draft.url, "https://second.local/x", "导入不该动原有页签的草稿")
+        XCTAssertEqual(app.draft.url, "https://api.demo.com/a", "导入后自动打开导入的请求")
     }
 
     // MARK: - 边界

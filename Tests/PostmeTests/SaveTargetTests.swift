@@ -73,8 +73,7 @@ final class SaveTargetTests: XCTestCase {
         service.saveNow(Workspace(
             projects: [project],
             activeProjectID: project.id,
-            draft: APIRequest(name: "r", url: "https://one"),
-            draftNodeID: UUID()
+            tabs: [EditorTab(draft: APIRequest(name: "r", url: "https://one"), nodeID: UUID())]
         ))
 
         let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir))

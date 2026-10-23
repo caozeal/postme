@@ -186,6 +186,8 @@ enum PostmanCodec {
     struct URLValue: Codable {
         var raw: String?
         var query: [Query]?
+        /// Postman 的路径变量（`:id` 对应的值）。
+        var variable: [Variable]?
 
         struct Query: Codable {
             var key: String
@@ -193,9 +195,10 @@ enum PostmanCodec {
             var disabled: Bool?
         }
 
-        init(raw: String?, query: [Query]?) {
+        init(raw: String?, query: [Query]?, variable: [Variable]? = nil) {
             self.raw = raw
             self.query = query
+            self.variable = variable
         }
 
         init(from decoder: Decoder) throws {
@@ -203,20 +206,23 @@ enum PostmanCodec {
                let string = try? container.decode(String.self) {
                 self.raw = string
                 self.query = nil
+                self.variable = nil
                 return
             }
             let container = try decoder.container(keyedBy: CodingKeys.self)
             self.raw = try container.decodeIfPresent(String.self, forKey: .raw)
             self.query = try container.decodeIfPresent([Query].self, forKey: .query)
+            self.variable = try container.decodeIfPresent([Variable].self, forKey: .variable)
         }
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encodeIfPresent(raw, forKey: .raw)
             try container.encodeIfPresent(query, forKey: .query)
+            try container.encodeIfPresent(variable, forKey: .variable)
         }
 
-        enum CodingKeys: String, CodingKey { case raw, query }
+        enum CodingKeys: String, CodingKey { case raw, query, variable }
     }
 
     struct Body: Codable {
@@ -226,6 +232,8 @@ enum PostmanCodec {
         var formdata: [FormParam]?
         var graphql: GraphQL?
         var options: Options?
+        /// `mode == "file"` 时的文件正文。
+        var file: FilePayload? = nil
 
         struct Options: Codable {
             var raw: RawOptions?
@@ -236,6 +244,11 @@ enum PostmanCodec {
             var query: String?
             var variables: String?
         }
+
+        struct FilePayload: Codable {
+            var src: String?
+            var contentType: String?
+        }
     }
 
     struct FormParam: Codable {
@@ -243,6 +256,32 @@ enum PostmanCodec {
         var value: String?
         var disabled: Bool?
         var type: String?
+        /// `type == "file"` 时的本地路径。Postman 也允许数组（多文件），这里取第一个。
+        var src: String?
+
+        init(key: String, value: String? = nil, disabled: Bool? = nil, type: String? = nil, src: String? = nil) {
+            self.key = key
+            self.value = value
+            self.disabled = disabled
+            self.type = type
+            self.src = src
+        }
+
+        /// 容错解码：`src` 既可能是字符串，也可能是字符串数组。
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = (try? c.decode(String.self, forKey: .key)) ?? ""
+            value = (try? c.decodeIfPresent(String.self, forKey: .value)) ?? nil
+            disabled = (try? c.decodeIfPresent(Bool.self, forKey: .disabled)) ?? nil
+            type = (try? c.decodeIfPresent(String.self, forKey: .type)) ?? nil
+            if let single = (try? c.decodeIfPresent(String.self, forKey: .src)) ?? nil {
+                src = single
+            } else if let many = (try? c.decodeIfPresent([String].self, forKey: .src)) ?? nil {
+                src = many.first
+            } else {
+                src = nil
+            }
+        }
     }
 
     struct Variable: Codable {
@@ -343,6 +382,11 @@ enum PostmanCodec {
             }
         }
         result.url = url
+        // Postman 的 url.variable 存的是路径变量值；URL 里没有的值会被同步掉。
+        let importedPathParams = (request.url?.variable ?? []).map {
+            KeyValueItem(key: $0.key, value: $0.value ?? "")
+        }
+        result.pathParams = PathParams.synchronize(url: result.url, existing: importedPathParams)
 
         // 认证：request 级覆盖 collection 级（Postman 语义）。
         applyAuth(request.auth ?? collectionAuth, to: &result, notes: notes)
@@ -368,24 +412,48 @@ enum PostmanCodec {
                 }
             case "formdata":
                 result.bodyKind = .multipart
-                // 文件字段 v1 不支持，标记为禁用但保留可见
-                result.formFields = (body.formdata ?? []).map {
-                    let isFile = ($0.type ?? "text") == "file"
-                    return KeyValueItem(
-                        isEnabled: !($0.disabled ?? false) && !isFile,
-                        key: $0.key,
-                        value: isFile ? notes.l10n(.curlFileFieldPlaceholder) : ($0.value ?? "")
-                    )
+                var textFields: [KeyValueItem] = []
+                var files: [FileField] = []
+                for param in body.formdata ?? [] {
+                    if (param.type ?? "text") == "file" {
+                        // 没有 src 的文件字段保留为禁用行：让用户看见「这里原本有个文件」，
+                        // 而不是静默消失。
+                        let src = param.src?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        files.append(FileField(
+                            isEnabled: !(param.disabled ?? false) && !src.isEmpty,
+                            name: param.key,
+                            path: src
+                        ))
+                    } else {
+                        textFields.append(KeyValueItem(
+                            isEnabled: !(param.disabled ?? false),
+                            key: param.key,
+                            value: param.value ?? ""
+                        ))
+                    }
                 }
+                result.formFields = textFields
+                result.fileFields = files
             case "graphql":
                 // Postman 的 graphql body 实际发出的就是 {"query":...,"variables":...} 的 JSON。
                 // 这里还原成等效 JSON 正文，而不是静默丢弃。
                 result.bodyKind = .json
                 result.bodyText = Self.graphQLBodyText(body.graphql)
             case "file":
-                // 文件 body v1 不支持；若带有 raw 文本则保留，避免静默丢失
-                result.bodyKind = .rawText
-                result.bodyText = body.raw ?? ""
+                // Postman 的 file body 就是「把本地文件原样作为正文」。
+                if let src = body.file?.src?.trimmingCharacters(in: .whitespacesAndNewlines), !src.isEmpty {
+                    result.bodyKind = .binary
+                    result.binaryFilePath = src
+                    if let contentType = body.file?.contentType, !contentType.isEmpty {
+                        result.binaryContentType = contentType
+                    }
+                } else if let raw = body.raw, !raw.isEmpty {
+                    // 没有文件路径但带 raw 文本：保留文本，避免静默丢失
+                    result.bodyKind = .rawText
+                    result.bodyText = raw
+                } else {
+                    result.bodyKind = .none
+                }
             default:
                 // 未知 mode：保留 raw 原文而不是静默清空
                 if let raw = body.raw, !raw.isEmpty {
@@ -401,6 +469,55 @@ enum PostmanCodec {
     }
 
     // MARK: - 认证
+
+    /// 把请求的认证配置编码成 Postman 的 `auth` 结构。
+    ///
+    /// **为什么不在导出前物化成 Header**：Basic 的凭据里可能写着 `{{username}}`，
+    /// 先 base64 会把 `{{username}}` 这几个字符烤死，导入方再也改不回来。
+    /// 保留结构后，变量由 Postman 在发送时替换，语义与 postme 一致。
+    private static func authOut(_ auth: RequestAuth) -> Auth? {
+        switch auth.kind {
+        case .none:
+            return nil
+
+        case .bearer:
+            // 与发送侧同一口径：Token 前后空白不算内容。
+            let token = auth.bearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !token.isEmpty else { return nil }
+            return Auth(
+                type: "bearer",
+                bearer: [.init(key: "token", value: token)],
+                basic: nil,
+                apikey: nil
+            )
+
+        case .basic:
+            guard !auth.username.isEmpty || !auth.password.isEmpty else { return nil }
+            return Auth(
+                type: "basic",
+                bearer: nil,
+                basic: [
+                    .init(key: "username", value: auth.username),
+                    .init(key: "password", value: auth.password),
+                ],
+                apikey: nil
+            )
+
+        case .apiKey:
+            let name = auth.apiKeyName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            return Auth(
+                type: "apikey",
+                bearer: nil,
+                basic: nil,
+                apikey: [
+                    .init(key: "key", value: name),
+                    .init(key: "value", value: auth.apiKeyValue),
+                    .init(key: "in", value: auth.apiKeyLocation.rawValue),
+                ]
+            )
+        }
+    }
 
     /// 把 Postman 的 `auth` 物化成等效的请求内容。
     ///
@@ -511,7 +628,12 @@ enum PostmanCodec {
             return Item(name: folder.name, item: folder.children.map { convertOut($0) }, request: nil)
 
         case .request(let saved):
-            let request = saved.request
+            // 手动 Cookie 行在发送时才会变成 Cookie 头；导出的是静态集合，
+            // 这里物化一次，否则「导出 → 导入」会把 Cookie 整段丢掉。
+            // 会话 Jar 不导出：它是运行期登录态，不该被写进可分享的集合文件。
+            var request = saved.request
+            CookieApplier.apply(manual: request.cookies, jar: [], to: &request)
+
             var headers = request.headers.map {
                 Header(key: $0.key, value: $0.value, disabled: $0.isEnabled ? nil : true)
             }
@@ -528,7 +650,8 @@ enum PostmanCodec {
                 headers.append(Header(key: "Content-Type", value: request.rawContentType, disabled: nil))
             }
 
-            var raw = request.url
+            // Postman 的 URL 变量用 `:id`；把 `{id}` 转过去，变量表才能生效。
+            var raw = PathParams.postmanStyleURL(request.url)
             let queries: [URLValue.Query]? = request.queryParams.isEmpty ? nil : request.queryParams.map {
                 URLValue.Query(key: $0.key, value: $0.value, disabled: $0.isEnabled ? nil : true)
             }
@@ -540,14 +663,29 @@ enum PostmanCodec {
                 }
             }
 
+            // 只导出 URL 里仍然存在的路径变量；编辑过程中留下的隐藏行不写进集合。
+            let exportedPathParams = PathParams.synchronize(
+                url: request.url,
+                existing: request.pathParams,
+                prune: true
+            )
+            let urlVariables: [Variable]? = exportedPathParams.isEmpty
+                ? nil
+                : exportedPathParams
+                    .filter { !$0.key.isEmpty }
+                    .map { Variable(key: $0.key, value: $0.value) }
+
             return Item(
                 name: saved.name,
                 item: nil,
                 request: Request(
                     method: request.method.rawValue,
                     header: headers.isEmpty ? nil : headers,
-                    url: URLValue(raw: raw, query: queries),
-                    body: convertBodyOut(request)
+                    url: URLValue(raw: raw, query: queries, variable: urlVariables),
+                    body: convertBodyOut(request),
+                    // 认证按 Postman 的结构导出，而不是先物化成 Header：
+                    // 这样 `{{token}}` 之类的变量能原样保留，导入方也能继续编辑。
+                    auth: authOut(request.auth)
                 )
             )
         }
@@ -578,14 +716,34 @@ enum PostmanCodec {
                 options: nil
             )
         case .multipart:
+            var params = request.formFields.map {
+                FormParam(key: $0.key, value: $0.value, disabled: $0.isEnabled ? nil : true, type: "text")
+            }
+            params += request.fileFields.map {
+                FormParam(
+                    key: $0.name,
+                    value: nil,
+                    disabled: $0.isEnabled ? nil : true,
+                    type: "file",
+                    src: $0.path
+                )
+            }
             return Body(
                 mode: "formdata",
                 raw: nil,
                 urlencoded: nil,
-                formdata: request.formFields.map {
-                    FormParam(key: $0.key, value: $0.value, disabled: $0.isEnabled ? nil : true, type: "text")
-                },
+                formdata: params,
                 options: nil
+            )
+
+        case .binary:
+            return Body(
+                mode: "file",
+                raw: nil,
+                urlencoded: nil,
+                formdata: nil,
+                options: nil,
+                file: .init(src: request.binaryFilePath, contentType: request.binaryContentType)
             )
         }
     }

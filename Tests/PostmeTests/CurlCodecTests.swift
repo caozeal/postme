@@ -192,10 +192,34 @@ final class CurlCodecTests: XCTestCase {
         XCTAssertEqual(request.bodyKind, .multipart)
         XCTAssertEqual(request.formFields.first?.value, "hi there")
 
-        // 文件字段无法导入，但要显式禁用 + 提示，不能静默丢掉
-        let fileField = try XCTUnwrap(request.formFields.last)
-        XCTAssertFalse(fileField.isEnabled)
-        XCTAssertTrue(result.warnings.contains { $0.contains("文件") }, "\(result.warnings)")
+        // 文件字段现在是正式能力：进 fileFields，路径原样保留
+        let fileField = try XCTUnwrap(request.fileFields.first)
+        XCTAssertEqual(fileField.name, "f")
+        XCTAssertEqual(fileField.path, "/tmp/a.png")
+        XCTAssertTrue(fileField.isEnabled)
+        XCTAssertFalse(result.warnings.contains { $0.contains("不支持") }, "\(result.warnings)")
+    }
+
+    /// `--form-string` 的取值是字面量：`;` 不是 part 选项、`@` 不是读文件。
+    /// 曾把 `;` 之后砍掉（`-F` 的语义），服务端收到的就是另一个值。
+    func testFormStringKeepsSemicolonLiteral() throws {
+        let request = try only(#"curl 'https://api.demo.com/up' --form-string 'note=a;b=x' --form-string 'to=@home'"#)
+        XCTAssertEqual(request.bodyKind, .multipart)
+        XCTAssertEqual(request.formFields.map(\.key), ["note", "to"])
+        XCTAssertEqual(request.formFields.map(\.value), ["a;b=x", "@home"])
+        XCTAssertTrue(request.formFields.allSatisfy(\.isEnabled), "字面量字段不该被当成文件占位行")
+
+        // `-F` 里 `;` 仍是 part 选项：这条行为不变。
+        let withOption = try only(#"curl 'https://api.demo.com/up' -F 'note=a;type=text/plain'"#)
+        XCTAssertEqual(withOption.formFields.map(\.value), ["a"])
+    }
+
+    /// 空正文 + 显式 JSON Content-Type：判据与有正文时一致，就是一次 JSON 请求。
+    func testEmptyBodyWithJSONContentTypeStaysJSON() throws {
+        let request = try only(#"curl 'https://api.demo.com/touch' -X POST -H 'Content-Type: application/json' --data-raw ''"#)
+        XCTAssertEqual(request.bodyKind, .json)
+        XCTAssertEqual(request.bodyText, "")
+        XCTAssertEqual(try wire(request).value(forHTTPHeaderField: "Content-Type"), "application/json")
     }
 
     func testHeadFlagBecomesHEADWithNoBody() throws {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 侧边栏：项目切换器 + 当前项目的目录树 + 搜索 + 历史。
 struct SidebarView: View {
@@ -21,6 +22,11 @@ struct SidebarView: View {
     /// 待确认删除的项目 id（用 id 而非 Project，避免删除后视图还持着旧值）。
     @State private var projectToDeleteID: UUID?
 
+    /// 当前正在拖动的节点。拖放目标据此判断「能不能放」。
+    @State private var draggingNodeID: UUID?
+    /// 当前拖放目标（用于画插入线 / 文件夹高亮）。
+    @State private var dropTarget: NodeMoveTarget?
+
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -33,22 +39,12 @@ struct SidebarView: View {
             searchBar
             Divider()
             tree
+            historyPanel
         }
         .sheet(isPresented: $showRenameSheet) { renameSheet }
         .sheet(isPresented: $showNewFolderSheet) { newFolderSheet }
         .sheet(isPresented: $showNewProjectSheet) { newProjectSheet }
         .sheet(isPresented: $showRenameProjectSheet) { renameProjectSheet }
-        .confirmationDialog(
-            app.t(.draftConflictTitle),
-            isPresented: $app.showDraftConflict,
-            titleVisibility: .visible
-        ) {
-            Button(app.t(.draftConflictSaveAndContinue)) { app.saveDraftAndContinue() }
-            Button(app.t(.draftConflictDiscard), role: .destructive) { app.discardDraftAndContinue() }
-            Button(app.t(.cancelButton), role: .cancel) { app.cancelDraftConflict() }
-        } message: {
-            Text(app.t(.draftConflictMessage))
-        }
         .confirmationDialog(
             app.t(.deleteProjectTitle),
             isPresented: deleteProjectDialogPresented,
@@ -78,23 +74,46 @@ struct SidebarView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer()
-            Menu {
-                // 新建项目只放在项目切换菜单里：+ 菜单管「当前项目内」的新增，
-                // 项目是更高一层，混进来会让两个入口语义重叠。
-                Button(app.t(.sidebarNewRequest)) { app.newRequest() }
-                Button(app.t(.sidebarNewFolder)) { beginNewFolder(parentID: nil) }
-                Divider()
-                Button(app.t(.sidebarImportCurlCommand)) { app.showCurlImport = true }
+            // 导入 / 导出放在侧栏可见位置：系统菜单栏有快捷键，但项目级操作
+            // 的入口应该在项目树旁边，而不是只藏在菜单栏里。
+            importExportMenu
+            // 新建项目只放在项目切换菜单里：项目是比「项目内新增」更高一层。
+            // 新建请求 / 导入 cURL 已挪到编辑器页签条的「＋」——那两件事产出的都是
+            // **新页签**，放在这里会让人以为它们只作用于当前项目。
+            // 只剩「新建文件夹」一项，就不套菜单了：一层点开只剩一行是白加一次点击。
+            Button {
+                beginNewFolder(parentID: nil)
             } label: {
                 Image(systemName: "plus")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
+            .buttonStyle(.borderless)
             .fixedSize()
-            .help(app.t(.sidebarNewHelp))
+            .help(app.t(.sidebarNewFolder))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+    }
+
+    private var importExportMenu: some View {
+        Menu {
+            Button(app.t(.menuImportOpenAPI)) { FileActions.importOpenAPI(into: app) }
+            Button(app.t(.menuImportPostman)) { FileActions.importPostman(into: app) }
+            Button(app.t(.menuImportCurl)) { app.showCurlImport = true }
+            Divider()
+            Button(app.t(.menuExportPostman)) { FileActions.exportPostman(from: app) }
+                .disabled(app.activeProject?.children.isEmpty ?? true)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 10))
+                Text(app.t(.sidebarImportExport))
+                    .font(.system(size: 11))
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(app.t(.sidebarImportExportHelp))
     }
 
     // MARK: - 项目切换器（参考 ApiPost：侧栏顶部下拉，目录树只显示当前项目）
@@ -188,18 +207,93 @@ struct SidebarView: View {
                         row(for: node)
                     }
                 }
-
-                Section(app.t(.sidebarHistorySection)) {
-                    if app.history.isEmpty {
-                        emptyHint(app.t(.sidebarEmptyHistory))
-                    }
-                    ForEach(app.history.prefix(50)) { entry in
-                        historyRow(entry)
-                    }
-                }
             }
         }
         .listStyle(.sidebar)
+    }
+
+    // MARK: - 历史（左下角，默认收起）
+
+    /// 历史区固定在侧栏底部：默认只留一行标题，点开才向上展开。
+    ///
+    /// **为什么默认收起**：历史是「回头查一条旧请求」时才用的，展开时它会把目录树
+    /// 挤到半屏以下；而目录树是每次都要看的。收起状态持久化到 settings，
+    /// 用户展开过一次，下次启动保持展开。
+    ///
+    /// **按项目隔离**：只展示当前项目发送过的记录——切换项目后，上一个项目的
+    /// 请求不该继续混在列表里（用户分不清哪条属于手头的项目）。
+    private var historyPanel: some View {
+        let expanded = app.workspace.settings.historyExpanded
+        let history = app.visibleHistory
+        return VStack(spacing: 0) {
+            Divider()
+            historyHeader(expanded: expanded, count: history.count)
+            if expanded {
+                Divider()
+                historyList
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func historyHeader(expanded: Bool, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                app.setHistoryExpanded(!expanded)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                    Text(app.t(.sidebarHistorySection))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    if count > 0 {
+                        Text("\(count)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(app.t(expanded ? .sidebarHistoryCollapse : .sidebarHistoryExpand))
+
+            Spacer(minLength: 4)
+
+            if expanded && count > 0 {
+                Button(app.t(.sidebarClearHistory)) {
+                    app.requestClearHistory()
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    /// 展开后的历史列表：上限 50 行（与原先一致），超出部分用「清空」管理。
+    private var historyList: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                if app.visibleHistory.isEmpty {
+                    HStack {
+                        emptyHint(app.t(.sidebarEmptyHistory))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                }
+                ForEach(app.visibleHistory.prefix(50)) { entry in
+                    historyRow(entry)
+                    Divider()
+                }
+            }
+        }
+        .frame(minHeight: 120, idealHeight: 200, maxHeight: 320)
     }
 
     private func emptyHint(_ text: String) -> some View {
@@ -210,6 +304,46 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func row(for node: CollectionNode) -> some View {
+        if app.isSearching {
+            // 搜索结果是一次性视图，拖动没有稳定的位置语义，禁用拖放。
+            rowContent(for: node)
+        } else {
+            rowContent(for: node)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .overlay(alignment: .top) {
+                    insertionLine(visible: dropTarget == .before(node.id), isTop: true)
+                }
+                .overlay(alignment: .bottom) {
+                    insertionLine(visible: dropTarget == .after(node.id), isTop: false)
+                }
+                .background(insideHighlight(for: node))
+                .onDrag {
+                    dragProvider(for: node)
+                } preview: {
+                    dragPreview(for: node)
+                }
+                .onDrop(
+                    of: [.postmeNodeID],
+                    delegate: NodeDropDelegate(
+                        target: node,
+                        dropTarget: $dropTarget,
+                        canDrop: { zone in
+                            guard let draggingNodeID else { return false }
+                            return app.canMoveNode(id: draggingNodeID, to: zone)
+                        },
+                        perform: { zone in
+                            guard let id = draggingNodeID else { return }
+                            draggingNodeID = nil
+                            app.moveNode(id: id, to: zone)
+                        }
+                    )
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func rowContent(for node: CollectionNode) -> some View {
         if case .folder(let folder) = node {
             Label(folder.name, systemImage: "folder")
                 .contextMenu { folderMenu(folder) }
@@ -221,6 +355,54 @@ struct SidebarView: View {
             }
             .contextMenu { requestMenu(saved) }
         }
+    }
+
+    @ViewBuilder
+    private func insertionLine(visible: Bool, isTop: Bool) -> some View {
+        if visible {
+            Rectangle()
+                .fill(Color.accentColor)
+                .frame(height: 2)
+                .offset(y: isTop ? -1 : 1)
+                .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private func insideHighlight(for node: CollectionNode) -> some View {
+        if node.isFolder, dropTarget == .inside(node.id) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.accentColor.opacity(0.16))
+        } else {
+            Color.clear
+        }
+    }
+
+    /// 拖拽载荷用自定义 UTType：只接受本 App 的节点，不会把外部拖进来的文本当成节点。
+    private func dragProvider(for node: CollectionNode) -> NSItemProvider {
+        draggingNodeID = node.id
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(
+            forTypeIdentifier: UTType.postmeNodeID.identifier,
+            visibility: .ownProcess
+        ) { completion in
+            completion(Data(node.id.uuidString.utf8), nil)
+            return nil
+        }
+        return provider
+    }
+
+    private func dragPreview(for node: CollectionNode) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: node.isFolder ? "folder" : "doc.text")
+                .foregroundStyle(.secondary)
+            Text(node.name)
+                .lineLimit(1)
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
     }
 
     private func methodBadge(_ method: HTTPMethod) -> some View {
@@ -257,7 +439,7 @@ struct SidebarView: View {
         .onTapGesture { app.restoreFromHistory(entry) }
         .contextMenu {
             Button(app.t(.sidebarRestoreToEditor)) { app.restoreFromHistory(entry) }
-            Button(app.t(.copyURLButton)) { copyToClipboard(entry.url) }
+            Button(app.t(.copyURLButton)) { FileActions.copyToPasteboard(entry.url) }
             Divider()
             Button(app.t(.sidebarDeleteRecord), role: .destructive) { app.deleteHistoryEntry(id: entry.id) }
         }
@@ -285,7 +467,8 @@ struct SidebarView: View {
             app.overwriteSavedRequest(id: saved.id, with: app.draft)
         }
         Divider()
-        Button(app.t(.copyURLButton)) { copyToClipboard(saved.request.url) }
+        Button(app.t(.copyURLButton)) { FileActions.copyToPasteboard(saved.request.url) }
+        Button(app.t(.copyCurlButton)) { FileActions.copyAsCurl(from: app, request: saved.request) }
         Button(app.t(.renameButton)) { beginRename(id: saved.id, current: saved.name) }
         Button(app.t(.deleteButton), role: .destructive) { app.deleteNode(id: saved.id) }
     }
@@ -425,9 +608,75 @@ struct SidebarView: View {
         guard let id = projectToDeleteID else { return "" }
         return app.projects.first { $0.id == id }?.name ?? ""
     }
+}
 
-    private func copyToClipboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+
+// MARK: - 拖放
+
+private extension UTType {
+    /// App 内部节点拖拽类型。`exportedAs` 不需要 Info.plist 声明，
+    /// 只在进程内传递，不会和外部拖拽混淆。
+    static let postmeNodeID = UTType(exportedAs: "dev.postme.node-id")
+}
+
+/// 单行的拖放判定。
+///
+/// 文件夹分为「上缘 / 中间 / 下缘」三段：上下插入同级，中间放入文件夹；
+/// 请求只有上下两段（请求不能容纳子节点）。
+private struct NodeDropDelegate: DropDelegate {
+    let target: CollectionNode
+    @Binding var dropTarget: NodeMoveTarget?
+    let canDrop: (NodeMoveTarget) -> Bool
+    let perform: (NodeMoveTarget) -> Void
+
+    func dropEntered(info: DropInfo) {
+        update(info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard let zone = zone(for: info), canDrop(zone) else {
+            clearIfMine()
+            return DropProposal(operation: .forbidden)
+        }
+        dropTarget = zone
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        clearIfMine()
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let zone = zone(for: info), canDrop(zone) else {
+            clearIfMine()
+            return false
+        }
+        dropTarget = nil
+        perform(zone)
+        return true
+    }
+
+    private func update(_ info: DropInfo) {
+        guard let zone = zone(for: info), canDrop(zone) else {
+            clearIfMine()
+            return
+        }
+        dropTarget = zone
+    }
+
+    /// 只清掉属于自己的高亮：从 A 行移到 B 行时，A 的 dropExited 可能晚于
+    /// B 的 dropEntered，无条件清空会把 B 刚画好的插入线抹掉。
+    private func clearIfMine() {
+        if dropTarget?.involves(target.id) == true { dropTarget = nil }
+    }
+
+    /// 侧栏行高约 20pt；文件夹中间留 10pt 作为「放入」区域。
+    private func zone(for info: DropInfo) -> NodeMoveTarget? {
+        if target.isFolder {
+            if info.location.y < 6 { return .before(target.id) }
+            if info.location.y > 16 { return .after(target.id) }
+            return .inside(target.id)
+        }
+        return info.location.y < 11 ? .before(target.id) : .after(target.id)
     }
 }

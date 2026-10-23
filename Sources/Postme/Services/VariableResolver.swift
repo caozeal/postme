@@ -68,7 +68,7 @@ enum VariableResolver {
         return (output, unresolved)
     }
 
-    /// 对整个请求做替换：URL / headers / query / body / form 字段。
+    /// 对整个请求做替换：URL / headers / query / body / form 字段 / 认证字段。
     static func resolve(_ request: APIRequest, variables: [String: String]) -> (request: APIRequest, unresolved: [String]) {
         var resolved = request
         var unresolved = Set<String>()
@@ -92,6 +92,25 @@ enum VariableResolver {
         resolved.formFields = request.formFields.map { item in
             KeyValueItem(id: item.id, isEnabled: item.isEnabled, key: apply(item.key), value: apply(item.value))
         }
+        resolved.fileFields = request.fileFields.map { field in
+            FileField(id: field.id, isEnabled: field.isEnabled, name: apply(field.name), path: apply(field.path))
+        }
+        resolved.binaryFilePath = apply(request.binaryFilePath)
+        resolved.binaryContentType = apply(request.binaryContentType)
+        resolved.cookies = request.cookies.map { item in
+            KeyValueItem(id: item.id, isEnabled: item.isEnabled, key: apply(item.key), value: apply(item.value))
+        }
+        // 路径参数名来自 URL，不参与替换；值可以写 {{变量}}。
+        resolved.pathParams = request.pathParams.map { item in
+            KeyValueItem(id: item.id, isEnabled: item.isEnabled, key: item.key, value: apply(item.value))
+        }
+
+        // 认证字段也走同一套替换：`{{token}}` 放进环境变量是这类配置最常见的用法。
+        resolved.auth.bearerToken = apply(request.auth.bearerToken)
+        resolved.auth.username = apply(request.auth.username)
+        resolved.auth.password = apply(request.auth.password)
+        resolved.auth.apiKeyName = apply(request.auth.apiKeyName)
+        resolved.auth.apiKeyValue = apply(request.auth.apiKeyValue)
 
         return (resolved, unresolved.sorted())
     }

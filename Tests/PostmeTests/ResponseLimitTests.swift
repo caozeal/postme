@@ -185,6 +185,13 @@ final class LocalHTTPServer {
         case fixed(Data, contentType: String)
         case bytes(count: Int, contentType: String)
         case delayed(seconds: Double, body: Data)
+        /// 分块写：先发响应头，再按 `interval` 逐块写 `chunks`。
+        ///
+        /// 不带 `Content-Length`，用「连接关闭」界定正文结束（HTTP/1.1 允许）。
+        /// `closeAfterLast == false` 时写完保持连接打开——用来测客户端取消与空闲超时。
+        case stream(chunks: [Data], interval: Double, contentType: String, closeAfterLast: Bool)
+        /// 302 到另一个路径，用来验证 `.head` 反映的是最终响应而不是中间跳转。
+        case redirect(to: String)
     }
 
     private let listener: FileHandle
@@ -241,6 +248,10 @@ final class LocalHTTPServer {
                 var len = socklen_t(MemoryLayout<sockaddr>.size)
                 let client = accept(self.listener.fileDescriptor, &clientAddr, &len)
                 guard client >= 0 else { return }
+                // 客户端取消后会关闭连接，服务端继续 write 会收到 SIGPIPE 直接杀掉测试进程。
+                // 关掉 SIGPIPE，让 write 返回 -1，由各路由自己判断退出。
+                var noSigPipe: Int32 = 1
+                setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
                 self.queue.async { self.serve(client) }
             }
         }
@@ -283,9 +294,46 @@ final class LocalHTTPServer {
             write(fd, headers(status: 200, length: body.count, contentType: "text/plain"))
             write(fd, body)
 
+        case .stream(let chunks, let interval, let contentType, let closeAfterLast):
+            // 用 chunked transfer-encoding：不带 Content-Length 时客户端才会把
+            // 每一批字节尽快交给 delegate，而不是等整段结束。
+            write(fd, chunkedHeaders(contentType: contentType))
+            for chunk in chunks {
+                let sizeLine = String(chunk.count, radix: 16) + "\r\n"
+                if write(fd, Data(sizeLine.utf8)) < 0 { return }
+                if write(fd, chunk) < 0 { return }
+                if write(fd, Data("\r\n".utf8)) < 0 { return }
+                if interval > 0 { Thread.sleep(forTimeInterval: interval) }
+            }
+            if closeAfterLast {
+                write(fd, Data("0\r\n\r\n".utf8))
+            } else {
+                // 不发终止块、不关连接：模拟"服务端还在推，但此刻静默"。
+                // 保持 socket 打开直到客户端放弃或测试结束。
+                while !stopped {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+            }
+
+        case .redirect(let location):
+            var lines = "HTTP/1.1 302 Found\r\n"
+            lines += "Location: \(location)\r\n"
+            lines += "Content-Length: 0\r\n"
+            lines += "Connection: close\r\n\r\n"
+            write(fd, Data(lines.utf8))
+
         case nil:
             write(fd, headers(status: 404, length: 0, contentType: "text/plain"))
         }
+    }
+
+    private func chunkedHeaders(contentType: String) -> Data {
+        var lines = "HTTP/1.1 200 OK\r\n"
+        lines += "Content-Type: \(contentType)\r\n"
+        lines += "Transfer-Encoding: chunked\r\n"
+        lines += "Connection: close\r\n"
+        lines += "\r\n"
+        return Data(lines.utf8)
     }
 
     @discardableResult

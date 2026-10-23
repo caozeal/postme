@@ -54,6 +54,29 @@ final class GUILanguageRenderTests: XCTestCase {
         }
     }
 
+    /// Vision 读出的文字 + 归一化坐标（原点在左下角）。
+    private struct OCRLine {
+        var text: String
+        var minY: CGFloat
+    }
+
+    private func ocrLines(_ path: String) throws -> [OCRLine] {
+        guard let image = NSImage(contentsOfFile: path),
+              let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            throw XCTSkip("无法读取截图: \(path)")
+        }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["zh-Hans", "en-US"]
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
+        return (request.results ?? []).compactMap { observation in
+            guard let text = observation.topCandidates(1).first?.string else { return nil }
+            let box = observation.boundingBox
+            return OCRLine(text: text, minY: box.minY)
+        }
+    }
+
     /// 用 Vision 读渲染结果里的文字——这是"用户实际看到什么"的机器可读版本。
     private func ocr(_ path: String) throws -> String {
         guard let image = NSImage(contentsOfFile: path),
@@ -150,5 +173,371 @@ final class GUILanguageRenderTests: XCTestCase {
         try render(RequestEditorView().environment(app), size: CGSize(width: 900, height: 700),
                    to: shot("editor-zh2.png"))
         XCTAssertTrue(try ocr(shot("editor-zh2.png")).contains("发送"), "切回中文应恢复")
+    }
+
+    /// SSE 事件分页：真实发一次流式请求，渲染响应区，用 OCR 证明用户看到什么。
+    ///
+    /// 覆盖的失败模式是「状态位对、视图不画」：`SSEStateTests` 只能证明 `stream.events`
+    /// 里有什么，证明不了「事件」分页真的出现在分段控件里、事件数据真的画出来了。
+    /// 同一条用例自带负控——非 SSE 请求后同一位置**不得**出现「事件」。
+    func testSSEEventsPaneRendersEventsAndHidesTabForNonSSE() throws {
+        try requireScreenCapture()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("postme-sse-render-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent("workspace")
+        let shots = root.appendingPathComponent("shots")
+        for sub in [dir, shots] {
+            try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        func shot(_ name: String) -> String { shots.appendingPathComponent(name).path }
+
+        let chunks = [
+            Data("event: delta\ndata: 第一条事件\n\n".utf8),
+            Data("data: 第二条事件\n\n".utf8)
+        ]
+        let server = try LocalHTTPServer(routes: [
+            "/sse": .stream(chunks: chunks, interval: 0, contentType: "text/event-stream", closeAfterLast: true),
+            "/plain": .fixed(Data("plain".utf8), contentType: "text/plain")
+        ])
+        defer { server.stop() }
+
+        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir),
+                           languageOverride: .zhHans)
+
+        // 真的发一次流式请求（不手改状态：要走真实解析与终态路径）。
+        app.draft = APIRequest(name: "sse", url: server.url("/sse"))
+        let send = Task { await app.send() }
+        pump(1.5)
+        _ = send
+
+        XCTAssertEqual(app.activeTab.stream.events.count, 2, "前置条件：应已收到两条事件")
+        XCTAssertEqual(app.responseSection, .events)
+
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("sse-events-zh.png"))
+        let sse = try ocr(shot("sse-events-zh.png"))
+        XCTAssertTrue(sse.contains("事件"), "分段控件应出现「事件」分页: \(sse)")
+        XCTAssertTrue(sse.contains("已结束"), "流结束后状态栏应显示「已结束」: \(sse)")
+        XCTAssertTrue(sse.contains("第一条事件"), "事件数据必须真的画出来: \(sse)")
+        XCTAssertTrue(sse.contains("第二条事件"), "两条事件都应可见: \(sse)")
+        XCTAssertTrue(sse.contains("delta"), "event: 字段应作为类型徽标出现: \(sse)")
+
+        // 英文界面：同一格切语言后事件仍在，文案跟着变。
+        app.setLanguage(.en)
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("sse-events-en.png"))
+        let english = try ocr(shot("sse-events-en.png"))
+        XCTAssertTrue(english.contains("Events"), "英文界面应有 Events 分页: \(english)")
+        XCTAssertTrue(english.contains("Closed"), "英文界面状态应为 Closed: \(english)")
+        XCTAssertFalse(english.contains("已结束"), "英文界面不应残留中文状态: \(english)")
+
+        // 负控：非 SSE 请求后「事件」分页必须消失，事件数据也不该留在界面上。
+        // 先切回中文——界面此刻是英文，不断言中文的「事件」就只是自说自话。
+        app.setLanguage(.zhHans)
+        app.draft = APIRequest(name: "plain", url: server.url("/plain"))
+        let second = Task { await app.send() }
+        pump(1.0)
+        _ = second
+
+        XCTAssertEqual(app.responseSection, .body)
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("plain-zh.png"))
+        let plain = try ocr(shot("plain-zh.png"))
+        XCTAssertFalse(plain.contains("事件"), "非 SSE 响应不应显示「事件」分页: \(plain)")
+        XCTAssertFalse(plain.contains("Events"), "非 SSE 响应不应显示 Events 分页: \(plain)")
+        XCTAssertFalse(plain.contains("第一条事件"), "非 SSE 响应不应残留上一次的事件: \(plain)")
+        XCTAssertTrue(plain.contains("Body"), "非 SSE 响应仍应显示 Body 分页: \(plain)")
+    }
+
+    /// B1 的像素证据：取消/中断后的状态栏。
+    ///
+    /// 审查原文的两个症状都必须在真实窗口里消失：
+    /// 1. 「已取消」与「接收中」同屏；
+    /// 2. `.failed(message)` 的消息只存在于数据里、界面上读不到。
+    func testCancelledAndFailedStreamStatusBarShowsTerminalStateOnly() throws {
+        try requireScreenCapture()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("postme-sse-terminal-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent("workspace")
+        let shots = root.appendingPathComponent("shots")
+        for sub in [dir, shots] {
+            try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        func shot(_ name: String) -> String { shots.appendingPathComponent(name).path }
+
+        let chunk = Data("data: tick\n\n".utf8)
+        let server = try LocalHTTPServer(routes: [
+            "/endless": .stream(
+                chunks: Array(repeating: chunk, count: 200),
+                interval: 0.2,
+                contentType: "text/event-stream",
+                closeAfterLast: false
+            ),
+            "/cut": .stream(chunks: [Data("data: kept\n\n".utf8)], interval: 0, contentType: "text/event-stream", closeAfterLast: false)
+        ])
+        defer { server.stop() }
+
+        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir),
+                           languageOverride: .zhHans)
+
+        // 1) 取消：状态栏只描述本次流。
+        app.draft = APIRequest(name: "endless", url: server.url("/endless"))
+        let send = Task { await app.send() }
+        for _ in 0..<200 where app.activeTab.stream.events.isEmpty {
+            pump(0.05)
+        }
+        XCTAssertFalse(app.activeTab.stream.events.isEmpty, "前置条件：应已收到事件")
+        app.cancelSend()
+        pump(1.0)
+        _ = send
+        XCTAssertEqual(app.activeTab.stream.status, .cancelled)
+
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("sse-cancelled-zh.png"))
+        let cancelled = try ocr(shot("sse-cancelled-zh.png"))
+        XCTAssertTrue(cancelled.contains("已取消"), "取消后应显示「已取消」: \(cancelled)")
+        XCTAssertFalse(cancelled.contains("接收中"), "取消后不得出现「接收中」: \(cancelled)")
+        XCTAssertTrue(cancelled.contains("事件"), "事件分页仍应在: \(cancelled)")
+
+        // 2) 中断：失败原因必须在界面上读得到（不只是 tooltip）。
+        var settings = app.workspace.settings
+        settings.timeout = 1
+        app.updateSettings(settings)
+        app.draft = APIRequest(name: "cut", url: server.url("/cut"))
+        let second = Task { await app.send() }
+        pump(2.5)
+        _ = second
+
+        guard case .failed(let message) = app.activeTab.stream.status else {
+            XCTFail("应为 .failed，实际: \(app.activeTab.stream.status)")
+            return
+        }
+        XCTAssertFalse(message.isEmpty)
+
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("sse-failed-zh.png"))
+        let failed = try ocr(shot("sse-failed-zh.png"))
+        XCTAssertTrue(failed.contains("已中断"), "中断后应显示「已中断」: \(failed)")
+        XCTAssertFalse(failed.contains("接收中"), "中断后不得出现「接收中」: \(failed)")
+        // OCR 对整句英文的识别不保证逐字符一致，取消息里最有辨识度的一段子串。
+        let probe = String(message.prefix(18))
+        XCTAssertTrue(failed.contains(probe) || failed.lowercased().contains("timed out"),
+                      "失败原因必须在界面上可见（期望含「\(probe)」）: \(failed)")
+    }
+
+    /// 请求栏的「复制为 cURL」只留图标：文字不得出现在栏里，tooltip 仍要说明它是什么。
+    ///
+    /// 失败模式：把 `Label(...)` 写回去——编译、功能、单测全过，只是请求栏又变挤了。
+    func testCopyCurlButtonShowsIconOnly() throws {
+        try requireScreenCapture()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("postme-copy-curl-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent("workspace")
+        let shots = root.appendingPathComponent("shots")
+        for sub in [dir, shots] {
+            try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = shots.appendingPathComponent("editor.png").path
+
+        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir),
+                           languageOverride: .zhHans)
+        app.draft = APIRequest(name: "图标按钮", url: "https://api.example.com/v1/orders")
+        try render(RequestEditorView().environment(app), size: CGSize(width: 900, height: 700), to: path)
+
+        let text = try ocr(path)
+        XCTAssertTrue(text.contains("发送"), "请求栏应仍渲染发送按钮: \(text)")
+        XCTAssertFalse(text.contains("复制为 cURL"), "请求栏不应再出现「复制为 cURL」文字: \(text)")
+
+        // 文字从可见标签挪到了 tooltip / 无障碍标签：两者都取同一份本地化文案。
+        XCTAssertEqual(app.t(.copyCurlButton), "复制为 cURL")
+        XCTAssertTrue(app.t(.copyCurlHelp).contains("curl"))
+
+        // 图标本身必须真的画得出来：SF Symbol 名字写错时 SwiftUI 静默渲染空白，
+        // OCR 也读不到，于是"去掉文字"就变成了"按钮消失"。
+        XCTAssertNotNil(
+            NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right",
+                    accessibilityDescription: nil),
+            "复制为 cURL 用的 SF Symbol 必须存在"
+        )
+    }
+
+    /// 历史区：默认收起（只有一栏标题，记录不可见），展开后记录出现在左下角。
+    ///
+    /// 这条覆盖的是纯视图行为，`SidebarHistoryPanelTests` 覆盖不到：
+    /// 状态位是对的、但视图仍然常驻渲染，测试照样全绿。
+    func testHistoryPanelCollapsedByDefaultThenExpands() throws {
+        try requireScreenCapture()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("postme-history-render-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent("workspace")
+        let shots = root.appendingPathComponent("shots")
+        for sub in [dir, shots] {
+            try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        func shot(_ name: String) -> String { shots.appendingPathComponent(name).path }
+
+        // 播种一条可辨识的历史记录，再按真实载入路径构造 AppState。
+        let service = PersistenceService(fileName: "workspace.json", directory: dir)
+        var seeded = service.load()
+        seeded.pushHistory(HistoryEntry(
+            request: APIRequest(name: "历史标记记录", url: "https://history-marker.example.com/x"),
+            statusCode: 200, duration: 0.1, succeeded: true
+        ))
+        service.saveNow(seeded)
+        let app = AppState(persistence: service, languageOverride: .zhHans)
+        XCTAssertEqual(app.history.count, 1)
+
+        try render(SidebarView().environment(app), size: CGSize(width: 300, height: 700),
+                   to: shot("sidebar-collapsed.png"))
+        let collapsedLines = try ocrLines(shot("sidebar-collapsed.png"))
+        let collapsed = collapsedLines.map(\.text).joined(separator: "\n")
+        XCTAssertTrue(collapsed.contains("历史"), "收起时仍应看到历史标题: \(collapsed)")
+        XCTAssertFalse(collapsed.contains("历史标记记录"), "默认收起时历史条目不得可见: \(collapsed)")
+
+        // 「左下角」是这个需求的另一半：标题必须贴近底边（Vision 的 y 轴从下往上，0 = 底）。
+        let header = try XCTUnwrap(
+            collapsedLines.first { $0.text.contains("历史") },
+            "没读到历史标题的位置: \(collapsedLines.map(\.text))"
+        )
+        XCTAssertLessThan(header.minY, 0.15, "历史标题应在侧栏底部，实际 y=\(header.minY)")
+
+        app.setHistoryExpanded(true)
+        try render(SidebarView().environment(app), size: CGSize(width: 300, height: 700),
+                   to: shot("sidebar-expanded.png"))
+        let expanded = try ocr(shot("sidebar-expanded.png"))
+        XCTAssertTrue(expanded.contains("历史标记记录"), "展开后应看到历史条目: \(expanded)")
+    }
+
+    // MARK: - 大模型输出分页
+
+    /// 「大模型输出」分页的像素证据：真实 SSE 请求 → 真实窗口 → Vision OCR。
+    ///
+    /// 覆盖的失败模式与事件分页那条同源：状态位对、视图不画。这里还必须证明两件
+    /// 只有像素能证明的事——① 分页控件里出现「大模型输出」；② 拼接文本真的画在主区域
+    /// （而不是只在 `stream.llm.fields` 里）。
+    func testLLMOutputPaneRendersJoinedTextAndTab() throws {
+        try requireScreenCapture()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("postme-llm-render-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent("workspace")
+        let shots = root.appendingPathComponent("shots")
+        for sub in [dir, shots] {
+            try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        func shot(_ name: String) -> String { shots.appendingPathComponent(name).path }
+
+        // OpenAI 形状：三个 delta 拼成一句可 OCR 的完整话。
+        let pieces = ["大模型", "拼接", "验证通过"]
+        let chunks = pieces.map { piece in
+            Data(#"data: {"choices":[{"index":0,"delta":{"content":"\#(piece)"}}]}"#.utf8 + Data("\n\n".utf8))
+        }
+        let server = try LocalHTTPServer(routes: [
+            "/sse": .stream(chunks: chunks, interval: 0, contentType: "text/event-stream", closeAfterLast: true)
+        ])
+        defer { server.stop() }
+
+        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir),
+                           languageOverride: .zhHans)
+
+        app.draft = APIRequest(name: "sse", url: server.url("/sse"))
+        let send = Task { await app.send() }
+        pump(1.5)
+        _ = send
+
+        // 前置条件：状态层确实拼好了。
+        XCTAssertEqual(app.activeTab.stream.llm.fields.first?.text, pieces.joined(), "前置条件：拼接文本应完整")
+        XCTAssertEqual(app.responseSection, .events, "默认落点仍是事件分页")
+
+        app.responseSection = .llm
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("llm-zh.png"))
+        let zh = try ocr(shot("llm-zh.png"))
+        XCTAssertTrue(zh.contains("大模型输出"), "分段控件应出现「大模型输出」分页: \(zh)")
+        XCTAssertTrue(zh.contains("事件"), "事件分页应仍在: \(zh)")
+        XCTAssertTrue(zh.contains("大模型"), "拼接文本必须真的画在主区域: \(zh)")
+        XCTAssertTrue(zh.contains("验证通过"), "拼接文本尾部也应可见: \(zh)")
+        XCTAssertTrue(zh.contains("OpenAI"), "格式标识应显示: \(zh)")
+
+        // 英文界面：文案跟着变，拼接内容（用户数据）不变。
+        app.setLanguage(.en)
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("llm-en.png"))
+        let en = try ocr(shot("llm-en.png"))
+        XCTAssertTrue(en.contains("Model Output"), "英文分页标题: \(en)")
+        XCTAssertFalse(en.contains("大模型输出"), "英文界面不应残留中文分页标题: \(en)")
+        XCTAssertTrue(en.contains("验证通过"), "拼接内容不随界面语言改变: \(en)")
+
+        // 负控：非 SSE 响应后该分页必须消失（控件里没有，内容区也不该按它渲染）。
+        app.setLanguage(.zhHans)
+        let plainServer = try LocalHTTPServer(routes: [
+            "/plain": .fixed(Data("plain".utf8), contentType: "text/plain")
+        ])
+        defer { plainServer.stop() }
+        app.draft = APIRequest(name: "plain", url: plainServer.url("/plain"))
+        let second = Task { await app.send() }
+        pump(1.0)
+        _ = second
+
+        XCTAssertEqual(app.responseSection, .body)
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("llm-plain.png"))
+        let plain = try ocr(shot("llm-plain.png"))
+        XCTAssertFalse(plain.contains("大模型输出"), "非 SSE 响应不应显示该分页: \(plain)")
+        XCTAssertFalse(plain.contains("验证通过"), "非 SSE 响应不应残留拼接文本: \(plain)")
+
+        // 设置页的新分区：标题、说明与已保存路径都要画出来，且不得把既有分区挤出可视区。
+        XCTAssertTrue(app.addLLMCustomPath("choices[0].delta.custom"))
+        try render(SettingsView().environment(app), size: CGSize(width: 480, height: 700),
+                   to: shot("settings-llm-zh.png"))
+        let settingsZh = try ocr(shot("settings-llm-zh.png"))
+        XCTAssertTrue(settingsZh.contains("大模型输出字段路径"), "设置页应有该分区: \(settingsZh)")
+        // OCR 会把 `[0]` 读成全角括号，只断言不会被误读的那半截。
+        XCTAssertTrue(settingsZh.contains("delta.custom"), "已保存路径应列出: \(settingsZh)")
+        XCTAssertTrue(settingsZh.contains("超时时间"), "既有分区不得被挤掉: \(settingsZh)")
+        XCTAssertTrue(settingsZh.contains("证书校验"), "既有证书开关不得被挤掉: \(settingsZh)")
+    }
+
+    /// LangGraph 形状：整份快照重复推送，界面必须显示「LangChain」格式且文本只出现一次。
+    ///
+    /// 为什么单独一条：这条路径的核心风险不是「画不出来」，而是**同一份答案被拼好几遍**——
+    /// 那种 bug 在纯状态断言里已经钉住（`testLangGraphRepeatedSnapshotDoesNotDuplicateText`），
+    /// 这里补的是「用户真的能在界面上看到它只出现一次」。
+    func testLangGraphSnapshotsRenderOnceWithLangChainFormat() throws {
+        try requireScreenCapture()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("postme-lg-render-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent("workspace")
+        let shots = root.appendingPathComponent("shots")
+        for sub in [dir, shots] {
+            try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        func shot(_ name: String) -> String { shots.appendingPathComponent(name).path }
+
+        let answer = "LangGraph 快照只拼一次"
+        let payload = #"{"response":{"role":"assistant","blocks":[{"block_type":"text","text":"\#(answer)"}]},"structured_response":null,"current_agent_name":"Default Assistant","tool_calls":[]}"#
+        let event = "data: " + payload + "\n\n"
+        // 同一份快照推 3 次（真实 LangGraph 每步都重推整份状态）。
+        let chunks = Array(repeating: Data(event.utf8), count: 3)
+        let server = try LocalHTTPServer(routes: [
+            "/lg": .stream(chunks: chunks, interval: 0, contentType: "text/event-stream", closeAfterLast: true)
+        ])
+        defer { server.stop() }
+
+        let app = AppState(persistence: PersistenceService(fileName: "workspace.json", directory: dir),
+                           languageOverride: .zhHans)
+        app.draft = APIRequest(name: "lg", url: server.url("/lg"))
+        let send = Task { await app.send() }
+        pump(1.5)
+        _ = send
+
+        let field = try XCTUnwrap(app.activeTab.stream.llm.fields.first)
+        XCTAssertEqual(app.activeTab.stream.llm.format, .langGraph, "格式应识别为 LangChain")
+        XCTAssertEqual(field.path, "response.blocks[0].text")
+        XCTAssertEqual(field.text, answer, "前置条件：重复快照不得拼多遍")
+
+        app.responseSection = .llm
+        try render(ResponseView().environment(app), size: CGSize(width: 900, height: 520), to: shot("lg-zh.png"))
+        let zh = try ocr(shot("lg-zh.png"))
+        XCTAssertTrue(zh.contains("LangChain"), "格式标识应显示 LangChain: \(zh)")
+        XCTAssertTrue(zh.contains("LangGraph 快照"), "拼接文本必须画在主区域: \(zh)")
+        XCTAssertFalse(zh.contains("快照只拼一次快照只拼一次"), "界面上也不得出现重复拼接: \(zh)")
     }
 }
