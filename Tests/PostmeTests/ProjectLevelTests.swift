@@ -23,6 +23,68 @@ final class ProjectLevelTests: XCTestCase {
         return app.editingNodeID!
     }
 
+    private func importResult() -> OpenAPIImportResult {
+        OpenAPIImportResult(title: "Imported", versionLabel: "3", nodes: [],
+                            environment: APIEnvironment(name: "Imported", variables: [KeyValueItem(key: "baseUrl", value: "https://new")]),
+                            requestCount: 1, folderCount: 0, warnings: [])
+    }
+
+    func testOpenAPIImportKeepsEnvironmentUntilProjectSwitchConfirmed() {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = app.addEnvironment(name: "Original")
+        let project = app.activeProject!.id
+        app.draft.url = "https://dirty"
+        app.beginOpenAPIImport(result: importResult(), fileName: "spec.json")
+        app.commitOpenAPIImport()
+        XCTAssertTrue(app.showProjectSwitchConfirm)
+        XCTAssertEqual(app.workspace.activeEnvironmentID, old)
+        app.cancelProjectSwitch()
+        XCTAssertEqual(app.workspace.activeProjectID, project)
+        XCTAssertEqual(app.workspace.activeEnvironmentID, old)
+        XCTAssertEqual(app.draft.url, "https://dirty")
+    }
+
+    func testOpenAPIImportActivatesEnvironmentAfterConfirmedSwitch() {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = app.addEnvironment(name: "Original")
+        app.draft.url = "https://dirty"
+        app.beginOpenAPIImport(result: importResult(), fileName: "spec.json")
+        app.commitOpenAPIImport()
+        app.discardAndConfirmProjectSwitch()
+        XCTAssertEqual(app.activeProject?.name, "Imported")
+        XCTAssertNotEqual(app.workspace.activeEnvironmentID, old)
+        XCTAssertEqual(app.activeEnvironment?.name, "Imported")
+    }
+
+    func testOpenAPIImportSaveAndSwitchPreservesDraftAndActivatesEnvironment() {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = app.addEnvironment(name: "Original")
+        let oldProject = app.activeProject!.id
+        app.draft.url = "https://dirty"
+        app.beginOpenAPIImport(result: importResult(), fileName: "spec.json")
+        app.commitOpenAPIImport()
+        app.saveAndConfirmProjectSwitch()
+        XCTAssertEqual(app.activeProject?.name, "Imported")
+        XCTAssertNotEqual(app.workspace.activeEnvironmentID, old)
+        XCTAssertTrue(app.projects.first(where: { $0.id == oldProject })?.children.contains(where: {
+            $0.savedRequest?.request.url == "https://dirty"
+        }) == true)
+    }
+
+    func testOpenAPIImportIntoCurrentProjectKeepsActiveEnvironment() {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = app.addEnvironment(name: "Original")
+        app.beginOpenAPIImport(result: importResult(), fileName: "spec.json")
+        app.openAPIImportTarget = .currentProject
+        app.commitOpenAPIImport()
+        XCTAssertEqual(app.workspace.activeEnvironmentID, old)
+        XCTAssertEqual(app.environments.count, 2)
+    }
+
     // MARK: - 不变量：至少一个项目
 
     func testFreshWorkspaceGetsDefaultProject() {

@@ -121,6 +121,21 @@ final class RequestBuildingTests: XCTestCase {
         XCTAssertTrue(body.contains("\r\n"))
     }
 
+    func testMultipartRejectsExplicitContentTypeBeforeSending() throws {
+        var request = APIRequest(url: "https://example.com")
+        request.method = .post
+        request.bodyKind = .multipart
+        request.headers = [KeyValueItem(key: "content-type", value: "multipart/form-data; boundary=wrong")]
+        XCTAssertThrowsError(try RequestExecutor.buildURLRequest(request, options: opts)) { error in
+            guard case RequestFailure.multipartContentTypeConflict = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+        request.headers[0].isEnabled = false
+        let built = try RequestExecutor.buildURLRequest(request, options: opts)
+        XCTAssertTrue(built.value(forHTTPHeaderField: "Content-Type")?.contains("boundary=") == true)
+    }
+
     func testInvalidURLIsRejected() {
         var req = APIRequest()
         req.url = "not a url"

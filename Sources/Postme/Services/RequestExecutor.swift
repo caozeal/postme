@@ -17,6 +17,8 @@ enum RequestFailure: Error {
     case fileUnreadable(String)
     /// 文件超过上传上限。参数是路径与上限字节数。
     case fileTooLarge(String, Int)
+    /// multipart 的 boundary 必须与实际正文一致。
+    case multipartContentTypeConflict
 
     /// 面向用户的说明。`.transport` 保留系统给的 `localizedDescription`
     /// （那是系统语言，跟着用户走）。
@@ -36,6 +38,8 @@ enum RequestFailure: Error {
             return l10n(.failureFileUnreadable, path)
         case .fileTooLarge(let path, let limit):
             return l10n(.failureFileTooLarge, ByteCountFormatter.string(fromByteCount: Int64(limit), countStyle: .file), path)
+        case .multipartContentTypeConflict:
+            return l10n(.failureMultipartContentTypeConflict)
         }
     }
 }
@@ -408,13 +412,12 @@ final class RequestExecutor: NSObject, URLSessionDataDelegate {
             }
 
         case .multipart:
+            guard !userProvidedContentType else { throw RequestFailure.multipartContentTypeConflict }
             let items = source.formFields.filter { $0.isEnabled && !$0.key.isEmpty }
             let files = source.fileFields.filter { $0.isEnabled && !$0.name.isEmpty }
             let boundary = "----postmeBoundary\(UUID().uuidString)"
             request.httpBody = try multipartBody(fields: items, files: files, boundary: boundary)
-            if !userProvidedContentType {
-                request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            }
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         case .binary:
             let path = source.binaryFilePath.trimmingCharacters(in: .whitespacesAndNewlines)

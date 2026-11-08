@@ -59,6 +59,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case sidebarDeleteFolder
     case sidebarOpen
     case sidebarOverwriteWithEditor
+    case sidebarOverwriteConfirmTitle
+    case sidebarOverwriteConfirmMessage
     case tabCloseConfirmTitle
     case tabCloseSaveAndClose
     case tabCloseDiscard
@@ -450,6 +452,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case failureFileMissing
     case failureFileUnreadable
     case failureFileTooLarge
+    case failureMultipartContentTypeConflict
     case responseBinaryPlaceholder
     case responseLimitConfigured
     case responseTruncatedByLimit
@@ -533,6 +536,8 @@ enum L10nTable {
         .sidebarDeleteFolder: "删除文件夹",
         .sidebarOpen: "打开",
         .sidebarOverwriteWithEditor: "用当前编辑器内容覆盖",
+        .sidebarOverwriteConfirmTitle: "覆盖请求",
+        .sidebarOverwriteConfirmMessage: "将用「%@」覆盖「%@」。目标请求已打开的页签及其未保存修改也会被替换。",
         .tabCloseConfirmTitle: "关闭前先保存吗？",
         .tabCloseSaveAndClose: "保存并关闭",
         .tabCloseDiscard: "放弃修改",
@@ -885,7 +890,7 @@ enum L10nTable {
         .openAPIImportedCurrentProject: "已导入 %d 个接口 到当前项目「%@」。",
         .openAPIImportNewHint: "将新建项目并切换过去。",
         .openAPIImportCurrentHint: "将在当前项目「%@」根目录新建一个文件夹。",
-        .openAPIImportEnvironmentHint: "将创建并启用环境「%@」。",
+        .openAPIImportEnvironmentHint: "将创建环境「%@」。并入已有项目时会保留当前环境；新项目在确认切换后启用新环境。",
         .openAPIImportFileLabel: "文件",
         .openAPIImportTargetLabel: "导入到",
 
@@ -896,6 +901,7 @@ enum L10nTable {
         .failureFileMissing: "未选择文件",
         .failureFileUnreadable: "无法读取文件：%@",
         .failureFileTooLarge: "文件超过 %@ 上限：%@",
+        .failureMultipartContentTypeConflict: "Multipart 请求不能手动设置 Content-Type；请禁用该请求头，由 postme 自动生成匹配的 boundary。",
         .responseBinaryPlaceholder: "（二进制响应，%.1f KB，无法以文本展示）",
         .responseLimitConfigured: "配置",
         .responseTruncatedByLimit: "…（响应体超过 %@ 上限，已停止接收；以上为前 %@）",
@@ -951,6 +957,8 @@ enum L10nTable {
         .sidebarDeleteFolder: "Delete Folder",
         .sidebarOpen: "Open",
         .sidebarOverwriteWithEditor: "Overwrite with Editor Content",
+        .sidebarOverwriteConfirmTitle: "Overwrite Request",
+        .sidebarOverwriteConfirmMessage: "Use “%@” to overwrite “%@”? The target's open tab and unsaved changes will also be replaced.",
         .tabCloseConfirmTitle: "Save before closing?",
         .tabCloseSaveAndClose: "Save and Close",
         .tabCloseDiscard: "Discard Changes",
@@ -1303,7 +1311,7 @@ enum L10nTable {
         .openAPIImportedCurrentProject: "Imported %d requests into the current project “%@”.",
         .openAPIImportNewHint: "Creates and activates a new project.",
         .openAPIImportCurrentHint: "Creates a folder at the root of the current project “%@”.",
-        .openAPIImportEnvironmentHint: "Creates and activates environment “%@”.",
+        .openAPIImportEnvironmentHint: "Creates environment “%@”. The current environment is retained when importing into an existing project; a new project activates it after switching.",
         .openAPIImportFileLabel: "File",
         .openAPIImportTargetLabel: "Import to",
 
@@ -1314,6 +1322,7 @@ enum L10nTable {
         .failureFileMissing: "No file selected",
         .failureFileUnreadable: "Cannot read file: %@",
         .failureFileTooLarge: "File exceeds the %@ limit: %@",
+        .failureMultipartContentTypeConflict: "Remove or disable the Content-Type header for multipart requests so postme can generate a matching boundary.",
         .responseBinaryPlaceholder: "(binary response, %.1f KB, cannot be shown as text)",
         .responseLimitConfigured: "configured",
         .responseTruncatedByLimit: "… (response body exceeded the %@ limit; receiving stopped. Showing the first %@)",

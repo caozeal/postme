@@ -101,6 +101,29 @@ final class PersistenceTests: XCTestCase {
 
     // MARK: - v5 三文件
 
+    func testFailedSidecarMigrationKeepsLegacyCoreAndCanRetry() throws {
+        try MainActor.assumeIsolated {
+            let dir = makeTempDir()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let legacy = #"{"version":4,"projects":[],"tabs":[{"draft":{"url":"https://draft"}}],"history":[{"requestName":"old","method":"GET","url":"https://old","succeeded":true,"timestamp":"2026-01-01T00:00:00Z","request":{"url":"https://old"}}]}"#
+            let core = dir.appendingPathComponent("workspace.json")
+            try Data(legacy.utf8).write(to: core)
+            let blockedHistory = dir.appendingPathComponent("history.json")
+            try FileManager.default.createDirectory(at: blockedHistory, withIntermediateDirectories: false)
+            let service = PersistenceService(directory: dir)
+            let loaded = service.load()
+            XCTAssertEqual(loaded.history.count, 1)
+            XCTAssertFalse(service.saveNow(loaded))
+            XCTAssertEqual(try String(contentsOf: core, encoding: .utf8), legacy)
+
+            try FileManager.default.removeItem(at: blockedHistory)
+            XCTAssertTrue(service.saveNow(loaded))
+            let reloaded = PersistenceService(directory: dir).load()
+            XCTAssertEqual(reloaded.history.count, 1)
+            XCTAssertEqual(reloaded.tabs.first?.draft.url, "https://draft")
+        }
+    }
+
     /// v4 单文件（tabs/history 都在核心文件里）载入后必须：数据完整、
     /// 首次保存迁移成三文件、核心文件不再含旧键。
     func testLegacySingleFileMigratesToSidecars() throws {

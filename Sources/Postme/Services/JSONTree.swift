@@ -65,7 +65,7 @@ enum JSONTree {
     /// 当前折叠状态下应展示的行（深度优先，父行紧跟子行）。
     static func flatten(_ root: JSONValue, collapsed: Set<String>) -> [JSONTreeRow] {
         var rows: [JSONTreeRow] = []
-        append(root, path: "$", depth: 0, key: nil, index: nil, collapsed: collapsed, into: &rows)
+        append(root, path: "$", depth: 0, key: nil, index: nil, trailingComma: false, collapsed: collapsed, into: &rows)
         return rows
     }
 
@@ -124,6 +124,7 @@ enum JSONTree {
         depth: Int,
         key: String?,
         index: Int?,
+        trailingComma: Bool,
         collapsed: Set<String>,
         into rows: inout [JSONTreeRow]
     ) {
@@ -137,7 +138,9 @@ enum JSONTree {
                 key: key,
                 index: index,
                 content: .container(isObject: true, childCount: members.count),
-                isCollapsed: isCollapsed
+                isCollapsed: isCollapsed,
+                // 展开的容器逗号由闭合行承担，避免开放括号行尾悬一个逗号。
+                trailingComma: (isCollapsed || members.isEmpty) && trailingComma
             ))
             guard !isCollapsed else { return }
             for (offset, member) in members.enumerated() {
@@ -147,9 +150,13 @@ enum JSONTree {
                     depth: depth + 1,
                     key: member.key,
                     index: nil,
+                    trailingComma: offset < members.count - 1,
                     collapsed: collapsed,
                     into: &rows
                 )
+            }
+            if !members.isEmpty {
+                rows.append(closingRow(path: path, depth: depth, isObject: true, trailingComma: trailingComma))
             }
         case .array(let items):
             rows.append(JSONTreeRow(
@@ -158,7 +165,8 @@ enum JSONTree {
                 key: key,
                 index: index,
                 content: .container(isObject: false, childCount: items.count),
-                isCollapsed: isCollapsed
+                isCollapsed: isCollapsed,
+                trailingComma: (isCollapsed || items.isEmpty) && trailingComma
             ))
             guard !isCollapsed else { return }
             for (offset, item) in items.enumerated() {
@@ -168,19 +176,37 @@ enum JSONTree {
                     depth: depth + 1,
                     key: nil,
                     index: offset,
+                    trailingComma: offset < items.count - 1,
                     collapsed: collapsed,
                     into: &rows
                 )
             }
+            if !items.isEmpty {
+                rows.append(closingRow(path: path, depth: depth, isObject: false, trailingComma: trailingComma))
+            }
         case .string(let token):
-            rows.append(scalarRow(value: token, kind: .string, path: path, depth: depth, key: key, index: index))
+            rows.append(scalarRow(value: token, kind: .string, path: path, depth: depth, key: key, index: index, trailingComma: trailingComma))
         case .number(let token):
-            rows.append(scalarRow(value: token, kind: .number, path: path, depth: depth, key: key, index: index))
+            rows.append(scalarRow(value: token, kind: .number, path: path, depth: depth, key: key, index: index, trailingComma: trailingComma))
         case .bool(let flag):
-            rows.append(scalarRow(value: flag ? "true" : "false", kind: .bool, path: path, depth: depth, key: key, index: index))
+            rows.append(scalarRow(value: flag ? "true" : "false", kind: .bool, path: path, depth: depth, key: key, index: index, trailingComma: trailingComma))
         case .null:
-            rows.append(scalarRow(value: "null", kind: .null, path: path, depth: depth, key: key, index: index))
+            rows.append(scalarRow(value: "null", kind: .null, path: path, depth: depth, key: key, index: index, trailingComma: trailingComma))
         }
+    }
+
+    /// 展开容器的闭合行（`}` / `]`），缩进与开放行一致；没有它，
+    /// 兄弟节点在视觉上会全部挤进上一个容器里，层级看起来是错的。
+    private static func closingRow(path: String, depth: Int, isObject: Bool, trailingComma: Bool) -> JSONTreeRow {
+        JSONTreeRow(
+            id: "\(path)/close",
+            depth: depth,
+            key: nil,
+            index: nil,
+            content: .closing(isObject: isObject),
+            isCollapsed: false,
+            trailingComma: trailingComma
+        )
     }
 
     private static func scalarRow(
@@ -189,7 +215,8 @@ enum JSONTree {
         path: String,
         depth: Int,
         key: String?,
-        index: Int?
+        index: Int?,
+        trailingComma: Bool
     ) -> JSONTreeRow {
         JSONTreeRow(
             id: path,
@@ -197,7 +224,8 @@ enum JSONTree {
             key: key,
             index: index,
             content: .scalar(value, kind),
-            isCollapsed: false
+            isCollapsed: false,
+            trailingComma: trailingComma
         )
     }
 
@@ -351,6 +379,8 @@ enum JSONTree {
 struct JSONTreeRow: Identifiable, Equatable {
     enum Content: Equatable {
         case container(isObject: Bool, childCount: Int)
+        /// 展开容器的闭合括号行。
+        case closing(isObject: Bool)
         case scalar(String, JSONScalarKind)
     }
 
@@ -363,6 +393,8 @@ struct JSONTreeRow: Identifiable, Equatable {
     let index: Int?
     let content: Content
     let isCollapsed: Bool
+    /// 行尾是否需要逗号（后面还有兄弟节点）。
+    let trailingComma: Bool
 
     var isContainer: Bool {
         if case .container = content { return true }

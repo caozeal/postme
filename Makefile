@@ -3,10 +3,11 @@ CONFIG    ?= release
 BUILD_DIR := build
 APP_DIR   := $(BUILD_DIR)/$(APP_NAME).app
 
-.PHONY: help build test app run open icon clean
+.PHONY: help build cli test app run open icon clean
 
 help:
 	@echo "make build   - 编译 release 产物"
+	@echo "make cli     - 编译并生成 build/postme 命令行入口"
 	@echo "make test    - 跑逻辑层测试(swift test)"
 	@echo "make app     - 编译并打包成 build/postme.app(含 ad-hoc 签名)"
 	@echo "make run     - 开发期直接运行(debug,靠 AppDelegate 兜底激活)"
@@ -16,6 +17,11 @@ help:
 
 build:
 	swift build -c $(CONFIG)
+
+cli: build
+	@mkdir -p $(BUILD_DIR)
+	@ln -sf ../.build/$(CONFIG)/postme $(BUILD_DIR)/postme
+	@echo "CLI ready: $(BUILD_DIR)/postme --help"
 
 icon:
 	swift scripts/render_icon.swift

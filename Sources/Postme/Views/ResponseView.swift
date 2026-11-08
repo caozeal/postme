@@ -39,16 +39,16 @@ struct ResponseView: View {
 
     /// 该展示的已完成响应。
     ///
-    /// 流被取消或中断时本次流**没有**终态响应：此时若继续展示 `app.response`，
+    /// 流在接收、被取消或中断时本次流**没有**终态响应：此时若继续展示 `app.response`，
     /// 上一条请求的状态码/正文会冒充成这次流的结果，与下方新流的事件同屏矛盾
-    /// （审查 B1）。所以这两种终态下一律返回 nil，由 `hasStreamContent` 走流式分支。
+    /// （审查 B1）。所以这些状态下一律返回 nil，由 `hasStreamContent` 走流式分支。
     private var displayResponse: APIResponse? {
         let stream = app.activeTab.stream
         if stream.isEventStream {
             switch stream.status {
-            case .cancelled, .failed:
+            case .streaming, .cancelled, .failed:
                 return nil
-            case .idle, .streaming, .closed:
+            case .idle, .closed:
                 break
             }
         }

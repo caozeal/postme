@@ -155,10 +155,47 @@ make app     # 编译并打包成 build/postme.app（含 ad-hoc 签名）
 make open    # 打包后用 LaunchServices 打开（菜单栏/聚焦最正常）
 make run     # 开发期直接运行（debug，靠 AppDelegate 兜底激活）
 make build   # 只编译，不打包
+make cli     # 编译并生成 build/postme 命令行入口
 make clean   # 清理构建产物
 ```
 
 首次构建后，把 `build/postme.app` 拖进「应用程序」文件夹即可日常使用。
+
+### 命令行界面（CLI）
+
+同一个可执行文件包含两种模式：不带参数启动 GUI，带子命令进入无窗口 CLI。`make cli` 会生成
+方便的 `build/postme` 入口；打包后的应用也可通过 `build/postme.app/Contents/MacOS/postme` 调用。
+
+```bash
+build/postme --help
+build/postme project create "我的项目"
+build/postme import openapi ./openapi.json --new-project "Demo API"
+build/postme import postman ./collection.json       # 始终创建新项目
+build/postme import curl ./request.curl --project "Demo API"
+cat ./request.curl | build/postme import curl - --new-project "从标准输入导入"
+
+build/postme --json project list
+build/postme --json request list --project "Demo API"
+build/postme request show <请求 UUID>
+build/postme environment create Development
+build/postme environment set Development baseUrl https://localhost:8080
+build/postme export postman "Demo API" --output ./collection.json
+build/postme request delete <请求 UUID> --yes
+```
+
+- OpenAPI 默认创建新项目，`--project` 则以文件夹形式并入已有项目；cURL 默认导入当前项目根目录；
+  Postman 与 GUI 行为一致，始终创建新项目。
+- 项目与环境可用准确名称或 UUID 定位；名称重复时必须用 UUID。请求命令使用 `request list`
+  输出的集合节点 UUID。
+- `--json` 输出稳定、机器可读的 JSON。导出命令未指定 `--output` 或指定 `-` 时，直接把 Postman
+  JSON 写到标准输出。
+- `--data-dir <目录>`（或 `POSTME_DATA_DIR`）可覆盖默认数据目录，便于隔离任务和测试。所有写操作
+  同步落盘。退出码：`0` 成功、`1` 操作失败、`2` 参数错误；删除数据或清空历史必须显式传 `--yes`。
+- 项目、请求、环境和历史的完整子命令见 `build/postme --help`；环境还支持 `use`、`deactivate`、
+  `unset` 和 `delete`。
+
+> **CLI 写操作前请先退出 GUI。** 当前 JSON 存储没有跨进程锁或合并机制：正在运行的 GUI 可能覆盖
+> 并发的 CLI 修改，反之亦然。只读命令不受此限制。
 
 > **为什么不直接 `swift run` 日常用**：以裸二进制启动时进程是 accessory 姿态，窗口不会置前、
 > 也没有应用菜单栏。代码里用 `NSApplicationDelegateAdaptor` 做了激活兜底，但正式使用还是
@@ -333,8 +370,9 @@ macOS 默认的智能引号会把 JSON 里的半角 `"` 换成弯引号 `”`，
 
 ```
 Sources/Postme/
-├── PostmeApp.swift          @main + AppDelegate 激活兜底 + 菜单命令 + Settings
+├── PostmeApp.swift          进程入口（GUI / CLI 分发）+ AppDelegate + 菜单命令 + Settings
 ├── AppState.swift           顶层状态容器（@MainActor @Observable）+ 页签状态机
+├── CLI/                     无窗口命令解析 + 同步工作区导入与数据操作
 ├── Models/                  纯数据：请求、响应、项目、集合树、环境、历史、工作区
 │   ├── EditorTab            一个打开的页签：草稿、基线、归属节点、页签级运行态
 │   ├── Project              项目层（顶层容器，旧版 collections 的迁移目标）
@@ -444,7 +482,10 @@ Tests/PostmeTests/           测试套件（含真实 socket 的响应上限/取
   抓窗口像素 + Vision OCR，确认请求栏上「复制为 cURL」**只渲染图标**、文字不再占用栏宽
   （说明文字在 tooltip 与无障碍标签里）；把 `Image` 改回 `Label` 会让该用例失败。
 - `swift build -c release` 零警告零错误
-- 本地化：`swift test` 共跑 **264 项测试**。`LocalizationTests` 断言两张字符串表覆盖全部键、
+- CLI：3 项 `CLIWorkspaceTests` 覆盖导入/环境持久化、带脏草稿的项目激活（含真实 `AppState` 启动）、
+  请求删除与最后一个项目保护；另在隔离目录完成三种格式导入、请求/项目/环境/历史操作、Postman
+  导出、删除确认和退出码的端到端验证。当前 `swift test` 共执行 **410 项测试**（7 项跳过，0 失败）。
+- 本地化：`LocalizationTests` 断言两张字符串表覆盖全部键、
   两语言间的格式占位符一致（含 `%.1f`）、英文表不含任何 CJK 字符、语言变化可被观察
   （菜单栏重算依赖的机制）、选择能往返落盘、缓存中的响应展示文本会重算，
   以及「未命名」占位名在**两种语言下**都能被识别——最后这条对应的失效模式是

@@ -176,6 +176,8 @@ final class AppState {
 
     /// 待确认切换的目标项目 id（确认框开着期间用它）。
     private(set) var pendingProjectActivationID: UUID?
+    /// OpenAPI 导入的环境只在项目切换确认后激活。
+    private var pendingImportEnvironmentID: UUID?
     /// 切换项目会重置编辑器：页签里有未保存的修改时，先让用户确认，
     /// 不能静默丢弃——和关页签、清历史是同一条纪律。
     var showProjectSwitchConfirm: Bool = false
@@ -655,6 +657,10 @@ final class AppState {
                     guard head.isEventStream else { continue }
                     // 只有 SSE 才进入流式展示：非 SSE 保持旧响应/空态不动（§3.6）。
                     isEventStream = true
+                    if let index = tabIndex(tabID) {
+                        tabs[index].response = nil
+                        tabs[index].responseBodyText = ""
+                    }
                     updateStream(tabID) { stream in
                         stream.isEventStream = true
                         stream.status = .streaming
@@ -1675,6 +1681,7 @@ final class AppState {
         pendingProjectActivationID = nil
         saveDirtyTabs()
         performProjectActivation(id)
+        activatePendingImportEnvironment()
     }
 
     /// 确认框的「放弃修改」：不保存，直接切换。
@@ -1683,6 +1690,7 @@ final class AppState {
         showProjectSwitchConfirm = false
         pendingProjectActivationID = nil
         performProjectActivation(id)
+        activatePendingImportEnvironment()
     }
 
     /// 确认框的「取消」（含 Esc / 点弹窗外）：切换不发生，编辑器原地留着。
@@ -1691,8 +1699,15 @@ final class AppState {
     /// （项目已建、文件夹已搬），被搬走的节点可能正是当时的选中项。
     func cancelProjectSwitch() {
         pendingProjectActivationID = nil
+        pendingImportEnvironmentID = nil
         showProjectSwitchConfirm = false
         dropStaleNodeReferences()
+    }
+
+    private func activatePendingImportEnvironment() {
+        guard let id = pendingImportEnvironmentID else { return }
+        pendingImportEnvironmentID = nil
+        selectEnvironment(id: id)
     }
 
     /// 当前有几个页签存在未保存的修改（切换确认文案用）。
@@ -1886,11 +1901,12 @@ final class AppState {
         openAPIImportPreview = nil
         openAPIImportName = ""
 
+        var importedProjectID: UUID?
         switch target {
         case .newProject:
             let project = Project(name: name, children: result.nodes)
             workspace.projects.append(project)
-            activateProject(project.id)
+            importedProjectID = project.id
 
         case .currentProject:
             guard let index = activeProjectIndex else { return }
@@ -1899,12 +1915,24 @@ final class AppState {
             )
         }
 
+        var importedEnvironmentID: UUID?
         if let environment = result.environment {
             var created = environment
             created.name = uniqueEnvironmentName(created.name)
             workspace.environments.append(created)
-            // 导入的请求统一用 {{baseUrl}}，不启用新环境它们就发不出去。
-            workspace.activeEnvironmentID = created.id
+            importedEnvironmentID = created.id
+        }
+
+        if let projectID = importedProjectID {
+            activateProject(projectID)
+            if pendingProjectActivationID == projectID {
+                pendingImportEnvironmentID = importedEnvironmentID
+            } else if let environmentID = importedEnvironmentID {
+                workspace.activeEnvironmentID = environmentID
+            }
+        } else if workspace.activeEnvironmentID == nil, let environmentID = importedEnvironmentID {
+            // 并入现有项目时保留用户选中的环境，避免改变已有请求的目标。
+            workspace.activeEnvironmentID = environmentID
         }
 
         dropStaleNodeReferences()

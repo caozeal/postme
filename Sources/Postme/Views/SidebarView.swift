@@ -21,6 +21,11 @@ struct SidebarView: View {
 
     /// 待确认删除的项目 id（用 id 而非 Project，避免删除后视图还持着旧值）。
     @State private var projectToDeleteID: UUID?
+    @State private var overwriteTargetID: UUID?
+    @State private var overwriteTargetName = ""
+    @State private var overwriteSourceName = ""
+    @State private var overwriteSource: APIRequest?
+    @State private var showOverwriteConfirm = false
 
     /// 当前正在拖动的节点。拖放目标据此判断「能不能放」。
     @State private var draggingNodeID: UUID?
@@ -57,6 +62,17 @@ struct SidebarView: View {
             Button(app.t(.cancelButton), role: .cancel) { projectToDeleteID = nil }
         } message: {
             Text(app.t(.deleteProjectMessage, projectToDeleteName))
+        }
+        .alert(app.t(.sidebarOverwriteConfirmTitle), isPresented: $showOverwriteConfirm) {
+            Button(app.t(.sidebarOverwriteWithEditor), role: .destructive) {
+                if let id = overwriteTargetID, let source = overwriteSource {
+                    app.overwriteSavedRequest(id: id, with: source)
+                }
+                overwriteSource = nil
+            }
+            Button(app.t(.cancelButton), role: .cancel) { overwriteSource = nil }
+        } message: {
+            Text(app.t(.sidebarOverwriteConfirmMessage, overwriteSourceName, overwriteTargetName))
         }
         .onChange(of: app.selectedNodeID) { _, newValue in
             app.handleSidebarSelection(newValue)
@@ -306,11 +322,9 @@ struct SidebarView: View {
     private func row(for node: CollectionNode) -> some View {
         if app.isSearching {
             // 搜索结果是一次性视图，拖动没有稳定的位置语义，禁用拖放。
-            rowContent(for: node)
+            requestRow(node, content: rowContent(for: node))
         } else {
-            rowContent(for: node)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            treeRow(node, content: rowContent(for: node))
                 .overlay(alignment: .top) {
                     insertionLine(visible: dropTarget == .before(node.id), isTop: true)
                 }
@@ -318,11 +332,6 @@ struct SidebarView: View {
                     insertionLine(visible: dropTarget == .after(node.id), isTop: false)
                 }
                 .background(insideHighlight(for: node))
-                .onDrag {
-                    dragProvider(for: node)
-                } preview: {
-                    dragPreview(for: node)
-                }
                 .onDrop(
                     of: [.postmeNodeID],
                     delegate: NodeDropDelegate(
@@ -340,6 +349,43 @@ struct SidebarView: View {
                     )
                 )
         }
+    }
+
+    /// 目录树里的一行。
+    ///
+    /// **拖拽只挂在内容本身**（不是整行）：拖拽源会接管落点的 mouseDown，
+    /// 一旦覆盖整行，单击就传不到表格，行看起来「点不动」。
+    @ViewBuilder
+    private func treeRow(_ node: CollectionNode, content: some View) -> some View {
+        let draggable = content
+            .onDrag {
+                dragProvider(for: node)
+            } preview: {
+                dragPreview(for: node)
+            }
+        if node.isFolder {
+            // 文件夹保持原样：选中即高亮，展开靠左侧三角，点击本身不产生动作。
+            draggable
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        } else {
+            requestRow(node, content: draggable)
+        }
+    }
+
+    /// 请求行：整行可点，点击即打开对应页签。
+    ///
+    /// **为什么不能只靠 `onChange(of: selectedNodeID)`**：打开请求原本是「选中值变了」
+    /// 的副作用。行上挂了拖拽源之后，单击经常传不到表格 → 选中值不变 → 回调不触发，
+    /// 表现就是「点了没反应」；而且一旦某次点击没改变选中值，再点同一行就永远沉默。
+    /// 这里补一个行内显式手势（与拖拽源并行识别），`onChange` 那条继续保留，
+    /// 负责键盘上下键切换选中时也能打开——两条路都走 `openSavedRequest`（已打开则
+    /// 复用页签），重复触发是幂等的。
+    private func requestRow(_ node: CollectionNode, content: some View) -> some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { app.openSavedRequest(node) })
     }
 
     @ViewBuilder
@@ -464,7 +510,11 @@ struct SidebarView: View {
     private func requestMenu(_ saved: CollectionNode.SavedRequest) -> some View {
         Button(app.t(.sidebarOpen)) { app.openSavedRequest(.request(saved)) }
         Button(app.t(.sidebarOverwriteWithEditor)) {
-            app.overwriteSavedRequest(id: saved.id, with: app.draft)
+            overwriteTargetID = saved.id
+            overwriteTargetName = saved.name
+            overwriteSourceName = app.tabTitle(app.activeTab)
+            overwriteSource = app.draft
+            showOverwriteConfirm = true
         }
         Divider()
         Button(app.t(.copyURLButton)) { FileActions.copyToPasteboard(saved.request.url) }

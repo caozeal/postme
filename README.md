@@ -188,10 +188,49 @@ make app     # build and bundle build/postme.app (ad-hoc signed)
 make open    # bundle, then open via LaunchServices (menu bar and focus behave correctly)
 make run     # run directly for development (debug; AppDelegate activates the app)
 make build   # compile only
+make cli     # compile and create the build/postme CLI entry point
 make clean   # remove build products
 ```
 
 After the first build, drag `build/postme.app` into Applications for daily use.
+
+### Command-line interface
+
+The same executable contains both interfaces: no arguments launches the GUI; any command selects
+the headless CLI. `make cli` creates the convenient `build/postme` entry point (the bundled app also
+exposes it as `build/postme.app/Contents/MacOS/postme`).
+
+```bash
+build/postme --help
+build/postme project create "My project"
+build/postme import openapi ./openapi.json --new-project "Demo API"
+build/postme import postman ./collection.json       # always creates a project
+build/postme import curl ./request.curl --project "Demo API"
+cat ./request.curl | build/postme import curl - --new-project "From stdin"
+
+build/postme --json project list
+build/postme --json request list --project "Demo API"
+build/postme request show <request-uuid>
+build/postme environment create Development
+build/postme environment set Development baseUrl https://localhost:8080
+build/postme export postman "Demo API" --output ./collection.json
+build/postme request delete <request-uuid> --yes
+```
+
+- OpenAPI defaults to a new project; `--project` merges it as a folder. cURL defaults to the active
+  project's root. Postman import keeps the GUI behavior and always creates a project.
+- Projects and environments accept an exact name or UUID; duplicate names must be disambiguated by
+  UUID. Request commands use the collection-node UUID printed by `request list`.
+- `--json` makes command results stable and machine-readable. Export writes the Postman JSON itself
+  to stdout when `--output` is omitted or `-`.
+- `--data-dir <dir>` (or `POSTME_DATA_DIR`) overrides the normal data directory, which is useful for
+  isolated jobs and tests. All writes are synchronous. Exit codes are `0` for success, `1` for an
+  operation failure and `2` for invalid usage; deleting data or clearing history requires `--yes`.
+- Run `build/postme <command>` for projects, requests, environments and history. Environment
+  commands also support `use`, `deactivate`, `unset` and `delete`.
+
+> **Close the GUI before CLI writes.** The JSON store currently has no cross-process lock or merge:
+> a running GUI can overwrite a concurrent CLI change (and vice versa). Read-only commands are safe.
 
 > **Why not just `swift run`**: a bare binary launches as an accessory process — the window is not
 > brought forward and there is no application menu. `NSApplicationDelegateAdaptor` provides an
@@ -401,8 +440,9 @@ request rather than an idealized one.
 
 ```
 Sources/Postme/
-├── PostmeApp.swift          @main + AppDelegate activation fallback + menu commands + Settings
+├── PostmeApp.swift          process entry (GUI / CLI dispatch) + AppDelegate + menu commands + Settings
 ├── AppState.swift           top-level state container (@MainActor @Observable) + open-tab state machine
+├── CLI/                     headless command parser + synchronous workspace import/data operations
 ├── Models/                  plain data: requests, responses, projects, collection tree, environments, history, workspace
 │   ├── EditorTab            one open tab: draft, baseline, owning node, per-tab runtime state
 │   ├── Project              project layer (top-level container; migration target for legacy collections)
@@ -540,7 +580,12 @@ undo a fixed behavior. They are now part of `Tests/PostmeTests/` and run with `s
   (the text lives in the tooltip and accessibility label); switching the `Image` back to a `Label`
   makes that test fail.
 - `swift build -c release`: zero warnings, zero errors
-- Localization: `swift test` runs **264 tests**. `LocalizationTests` asserts that both string tables
+- CLI: three `CLIWorkspaceTests` cover import/environment persistence, project activation with dirty
+  tabs (including a real `AppState` launch), request deletion and last-project protection. An isolated
+  end-to-end run also exercised all three import formats, request/project/environment/history operations,
+  Postman export, destructive-command confirmation and exit codes. `swift test` currently runs
+  **410 tests** (7 skipped, 0 failures).
+- Localization: `LocalizationTests` asserts that both string tables
   cover every key, that format placeholders match between languages (including `%.1f`), that the
   English table contains no CJK characters, that a language change is observable (the mechanism
   behind menu-bar recomputation), that the choice round-trips to disk, that cached response text is

@@ -1,5 +1,21 @@
 import SwiftUI
 import AppKit
+import Foundation
+
+/// 进程入口：无参数保持原生 GUI；出现任何参数则走无窗口 CLI。
+/// 分成独立入口类型，才能继续调用 SwiftUI `App` 协议提供的默认 `main()`。
+@main
+enum PostmeEntryPoint {
+    @MainActor
+    static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard !arguments.isEmpty else {
+            PostmeApp.main()
+            return
+        }
+        exit(PostmeCLI.run(arguments: arguments))
+    }
+}
 
 /// 应用委托。
 /// 作用:当以裸二进制方式启动(例如 `swift run` 或双击 `Contents/MacOS/postme`)时,
@@ -16,7 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main
 struct PostmeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 

@@ -53,6 +53,28 @@ final class SSETerminalDisplayTests: XCTestCase {
 
     // MARK: - B1：取消后的状态栏
 
+    func testStartingSSEClearsPreviousResponseWhileStreaming() async throws {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let server = try LocalHTTPServer(routes: [
+            "/plain": .fixed(Data("old response".utf8), contentType: "text/plain"),
+            "/stream": .stream(chunks: Array(repeating: Data("data: new\n\n".utf8), count: 100),
+                               interval: 0.2, contentType: "text/event-stream", closeAfterLast: false)
+        ])
+        defer { server.stop() }
+        app.draft.url = server.url("/plain")
+        await app.send()
+        XCTAssertNotNil(app.response)
+        app.draft.url = server.url("/stream")
+        let send = Task { await app.send() }
+        await waitUntil { app.activeTab.stream.status == .streaming }
+        XCTAssertEqual(app.activeTab.stream.status, .streaming)
+        XCTAssertNil(app.response)
+        XCTAssertTrue(app.responseBodyText.isEmpty)
+        app.cancelSend()
+        await send.value
+    }
+
     func testCancelledStreamShowsCancelledNotReceiving() async throws {
         let (app, dir) = makeApp()
         defer { try? FileManager.default.removeItem(at: dir) }

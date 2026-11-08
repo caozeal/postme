@@ -133,17 +133,18 @@ final class PersistenceService {
         }
     }
 
-    /// 立即保存，**返回时数据已落盘**。
+    /// 立即保存，**返回时数据已落盘**；返回所有发生变化的文件是否都写入成功。
     ///
     /// 必须同步：`applicationWillTerminate` 返回后进程随即退出，若只把写盘丢给后台队列，
     /// 那个块不保证来得及执行，防抖窗口内的改动就会丢失。
     /// 用串行队列 `sync` 还能顺带保证：先前排队的异步写先完成，不会乱序覆盖。
-    func saveNow(_ workspace: Workspace) {
+    @discardableResult
+    func saveNow(_ workspace: Workspace) -> Bool {
         saveTask?.cancel()
         saveGeneration += 1
         let generation = saveGeneration
         let paths = PersistencePaths(directory: directory, workspace: workspaceURL, tabs: tabsURL, history: historyURL)
-        writeQueue.sync {
+        return writeQueue.sync {
             Self.flush(workspace, paths: paths, state: writeState, generation: generation)
         }
     }
@@ -187,22 +188,15 @@ final class PersistenceService {
 
     // MARK: - 写出（只在 writeQueue 上调用）
 
+    @discardableResult
     nonisolated private static func flush(_ workspace: Workspace,
                                           paths: PersistencePaths,
                                           state: WriteState,
-                                          generation: Int) {
+                                          generation: Int) -> Bool {
         // 比队列里更旧的快照直接丢弃：它来自一次已经被后一次保存取代的调度。
-        guard generation > state.generation else { return }
+        guard generation > state.generation else { return true }
         state.generation = generation
-
-        let core = CoreSnapshot(workspace)
-        if state.core != core {
-            // 核心文件总是整份重写：项目树、环境、设置彼此独立，单独比对收益太小。
-            if let data = encode(workspace),
-               performWrite(data, to: paths.workspace, directory: paths.directory, name: "workspace.json") {
-                state.core = core
-            }
-        }
+        var succeeded = true
 
         let tabs = TabsSnapshot(activeTabID: workspace.activeTabID,
                                 tabs: workspace.tabs.map(TabRecord.init))
@@ -212,6 +206,8 @@ final class PersistenceService {
                                           tabs: tabs.tabs)),
                performWrite(data, to: paths.tabs, directory: paths.directory, name: "tabs.json") {
                 state.tabs = tabs
+            } else {
+                succeeded = false
             }
         }
 
@@ -222,8 +218,22 @@ final class PersistenceService {
             if let data = encode(HistoryFile(version: Workspace.currentVersion, history: cappedHistory)),
                performWrite(data, to: paths.history, directory: paths.directory, name: "history.json") {
                 state.history = cappedHistory
+            } else {
+                succeeded = false
             }
         }
+        // v4 的核心文件仍含页签和历史。只有两个侧车都已成功落盘，才可移除旧键；
+        // 否则一次写入失败或进程中断会让尚未迁出的数据失去唯一副本。
+        let core = CoreSnapshot(workspace)
+        if succeeded && state.core != core {
+            if let data = encode(workspace),
+               performWrite(data, to: paths.workspace, directory: paths.directory, name: "workspace.json") {
+                state.core = core
+            } else {
+                succeeded = false
+            }
+        }
+        return succeeded
     }
 
     nonisolated private static func encode<T: Encodable>(_ value: T) -> Data? {

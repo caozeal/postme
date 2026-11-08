@@ -9,10 +9,6 @@ struct JSONTreeView: View {
     @Binding var collapsed: Set<String>
     let l10n: Localizer
 
-    /// 单个标量的展示上限。树形视图是浏览结构用的，超长字符串截断显示，
-    /// 完整内容仍可通过工具栏「复制」拿到。
-    private let scalarDisplayLimit = 240
-
     var body: some View {
         ScrollView([.vertical]) {
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -54,13 +50,14 @@ struct JSONTreeView: View {
             Text(line(for: row))
                 .font(.system(size: 12, design: .monospaced))
                 .textSelection(.enabled)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                // 超长字段自动换行完整展示；行高随行数增长（minHeight 而非固定 height）。
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
-        .frame(height: 20)
+        .padding(.vertical, 2)
+        .frame(minHeight: 20)
     }
 
     private func line(for row: JSONTreeRow) -> AttributedString {
@@ -94,8 +91,14 @@ struct JSONTreeView: View {
             } else {
                 append(open, .secondary)
             }
+        case .closing(let isObject):
+            append(isObject ? "}" : "]", .secondary)
         case .scalar(let value, let kind):
-            append(truncated(value), color(for: kind))
+            append(value, color(for: kind))
+        }
+
+        if row.trailingComma {
+            append(",", .secondary)
         }
 
         return text
@@ -107,11 +110,6 @@ struct JSONTreeView: View {
         case .number: return Color(nsColor: JSONHighlighter.colorNumber())
         case .bool, .null: return Color(nsColor: JSONHighlighter.colorKeyword())
         }
-    }
-
-    private func truncated(_ token: String) -> String {
-        guard token.count > scalarDisplayLimit else { return token }
-        return String(token.prefix(scalarDisplayLimit)) + "…"
     }
 
     private func toggle(_ path: String) {
