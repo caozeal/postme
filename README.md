@@ -593,7 +593,7 @@ undo a fixed behavior. They are now part of `Tests/PostmeTests/` and run with `s
   tabs (including a real `AppState` launch), request deletion and last-project protection. An isolated
   end-to-end run also exercised all three import formats, request/project/environment/history operations,
   Postman export, destructive-command confirmation and exit codes. `swift test` currently runs
-  **410 tests** (7 skipped, 0 failures).
+  **431 tests** (8 skipped, 0 failures) on macOS CI.
 - Localization: `LocalizationTests` asserts that both string tables
   cover every key, that format placeholders match between languages (including `%.1f`), that the
   English table contains no CJK characters, that a language change is observable (the mechanism

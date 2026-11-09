@@ -59,4 +59,6 @@
 
 **补充实测（同日，沙箱审批恢复后）**：「重试」在故障仍在时点下去，弹窗保持、进程存活；删掉挡路的 `history.json` 目录后再点「重试」，三份 JSON 全部落盘并放行退出。CLI 写入（`project create FromCLI`）后把 postme 失焦（AX 激活 Finder）再切回，侧栏项目选择器由「默认项目」变为「FromCLI」——干净状态自动重载生效，未弹冲突提示。
 
-**仍待验证**：全量 `swift test`——本机 CLT 27.0 无 XCTest、无 `Xcode.app`、mini 的 ssh 当前不通。已新增 `.github/workflows/swift-tests.yml`（macOS runner 跑 `swift build` + `swift test`），待 CI 验证；`GUILanguageRenderTests` 在 CI 上仍按设计跳过（需要屏幕录制权限）。「有未落盘编辑时的冲突三按钮」仍未实测（干净状态的自动重载已验证）。
+**全量回归（CI）**：新增 `.github/workflows/swift-tests.yml`（macOS runner：`swift build` + `swift test`）。推送后 run `42610903196` 通过：**431 tests, 8 skipped, 0 failures**（约 42 秒）。8 项跳过 = 7 项 `GUILanguageRenderTests`（需要屏幕录制权限，按设计 opt-in，本机同样跑不了）+ 1 项 `testTallWindowGivesExtraHeightToResponse`（runner 可用高度只有 622，800/1100 落到同一高度）。首轮 CI 的 2 个失败正是 `SplitLayoutTests` 在本机 832 高、CI 622 高之间的环境差异——已改为屏幕高度不足时跳过「明显大于一半」与「拉高窗口」断言，不再把环境限制误报成回归。
+
+**仍未实测**：有未落盘编辑时的冲突三按钮（干净状态的自动重载已验证）。
