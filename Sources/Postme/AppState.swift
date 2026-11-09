@@ -568,11 +568,27 @@ final class AppState {
             issue.attempts += 1
             issue.arguments = arguments
             saveIssue = issue
+            // 用户主动「重新检查」或退出重试仍失败时要重新立起弹窗；
+            // 后台防抖的反复上报（.toolbar）不打扰。
+            if context != .toolbar { presentSaveIssue() }
             return
         }
         saveIssue = SaveIssue(kind: kind, context: context, titleKey: titleKey,
                               messageKey: messageKey, arguments: arguments)
-        showSaveIssueAlert = true
+        presentSaveIssue()
+    }
+
+    /// 让 SwiftUI 真正弹出（或切换到）当前 `saveIssue` 的弹窗。
+    ///
+    /// `.alert(isPresented:presenting:)` 在 `presenting` 变了、`isPresented` 仍为 true
+    /// 时只会 dismiss 旧弹窗、不会重新 present——问题类型从「保存失败」切成「工作区冲突」
+    /// 时会表现为弹窗直接消失。先置 false 再在下一个 runloop 置 true，才能强制重建。
+    private func presentSaveIssue() {
+        showSaveIssueAlert = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.saveIssue != nil else { return }
+            self.showSaveIssueAlert = true
+        }
     }
 
     private func clearSaveIssue() {
@@ -592,20 +608,10 @@ final class AppState {
         switch kind {
         case .writeFailed, .conflict(.busy):
             let result = flushNow()
-            if !result.isSuccess { restoreSaveIssueAlert() }
+            if !result.isSuccess { presentSaveIssue() }
         case .conflict(.fingerprintMismatch):
             // 冲突时重写只会覆盖磁盘，正确做法是重载到磁盘版本。
             reloadWorkspace()
-        }
-    }
-
-    /// SwiftUI 会在 alert 按钮的 action 执行完之后把 `isPresented` 置 false。
-    /// 保存仍失败时要在下一个 runloop 把弹窗重新立起来，否则用户只看到弹窗
-    /// 消失、问题却没解决（退出流程还会一直挂在 .terminateLater）。
-    private func restoreSaveIssueAlert() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.saveIssue != nil else { return }
-            self.showSaveIssueAlert = true
         }
     }
 
@@ -613,7 +619,7 @@ final class AppState {
 
     func showSaveIssueDetails() {
         guard saveIssue != nil else { return }
-        showSaveIssueAlert = true
+        presentSaveIssue()
     }
 
     /// 应用重新激活时调用；保存前的 CAS 冲突也会带着文件名走进来。
@@ -668,7 +674,7 @@ final class AppState {
                               titleKey: .quitSaveFailedTitle,
                               messageKey: .saveFailedMessage,
                               arguments: arguments)
-        showSaveIssueAlert = true
+        presentSaveIssue()
         return result
     }
 
@@ -685,7 +691,7 @@ final class AppState {
         default:
             // 仍失败：SwiftUI 已把弹窗收起，必须重新立起来，否则退出流程挂在
             // .terminateLater，用户看不到任何可点的出口。
-            restoreSaveIssueAlert()
+            presentSaveIssue()
         }
     }
 

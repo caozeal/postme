@@ -61,4 +61,6 @@
 
 **全量回归（CI）**：新增 `.github/workflows/swift-tests.yml`（macOS runner：`swift build` + `swift test`）。推送后 run `42610903196` 通过：**431 tests, 8 skipped, 0 failures**（约 42 秒）。8 项跳过 = 7 项 `GUILanguageRenderTests`（需要屏幕录制权限，按设计 opt-in，本机同样跑不了）+ 1 项 `testTallWindowGivesExtraHeightToResponse`（runner 可用高度只有 622，800/1100 落到同一高度）。首轮 CI 的 2 个失败正是 `SplitLayoutTests` 在本机 832 高、CI 622 高之间的环境差异——已改为屏幕高度不足时跳过「明显大于一半」与「拉高窗口」断言，不再把环境限制误报成回归。
 
-**仍未实测**：有未落盘编辑时的冲突三按钮（干净状态的自动重载已验证）。
+**冲突三按钮（2026-11-09 补测）**：先把 `workspace.json` 预建成目录，让首次防抖保存失败、`lastCommittedGeneration` 追不平（GUI 保持「有未落盘编辑」）；再删掉挡路目录，让 CLI 写入 `FromExternal`。切回 GUI 后因指纹变化 + 有草稿，弹出冲突三按钮（标题「工作区已在别处修改」，正文点名 `workspace.json` 并说明重载会放弃编辑）。逐项点过：「重新检查」后冲突仍在、弹窗保持；「保留我的改动」只收起弹窗、工具栏标记保留、磁盘上的 CLI 项目未被覆盖；点工具栏标记可重新打开；「重载并放弃我的编辑」后标记消失、侧栏出现 `FromExternal`。
+
+这次补测又暴露一个 UI 缺陷：`.alert(isPresented:presenting:)` 在 `presenting` 变化、`isPresented` 仍为 true 时只会 dismiss 旧弹窗、不会重新 present——「保存失败」弹窗开着时切到「工作区冲突」会直接消失。已统一改为先置 false、下一个 runloop 再置 true（`AppState.presentSaveIssue`），并回归了退出弹窗的三按钮与取消路径。**GUI 侧的保存失败 / 冲突 / 退出三条路径至此全部经过真实 AX 点击验证。**
