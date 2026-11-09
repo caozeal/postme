@@ -22,13 +22,66 @@ enum PostmeEntryPoint {
 /// 进程默认以 accessory/prohibited 姿态启动,窗口不会置前、也没有菜单栏。
 /// 这里强制切回常规 App 姿态并激活,保证开发期体验一致。
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// 由 ContentView.onAppear 注入；weak 避免委托长期持有状态容器。
+    @MainActor weak var appState: AppState?
+    /// 「取消退出」后恢复主窗口：关最后一窗触发的退出，决策前窗口已经关了。
+    @MainActor var reopenMainWindow: (() -> Void)?
+    @MainActor private var terminationPending = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        // 用户从终端跑完 CLI 切回 GUI 时检测磁盘改动；保存前的 CAS 是另一条兜底路径。
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.appState?.checkForExternalChanges()
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            MainActor.assumeIsolated { reopenMainWindow?() }
+        }
+        return true
+    }
+
+    /// 退出前做一次权威落盘；失败时挂起退出，把决定权交给界面上的三按钮。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            // 连按 Cmd-Q / 重复关窗时，第二次不要再起一轮挂起。
+            guard !terminationPending else { return .terminateLater }
+            guard let appState else {
+                // 状态容器没注入就不能假装「保存成功」放行；但此时也没有界面可弹，
+                // 只能如实记录，让验证/日志能发现这条路径漏了接线。
+                print("[postme] 退出时状态容器尚未注入，无法执行退出前保存")
+                return .terminateNow
+            }
+            let result = appState.prepareForTermination()
+            if result.isSuccess { return .terminateNow }
+            terminationPending = true
+            return .terminateLater
+        }
+    }
+
+    /// 所有退出按钮的唯一出口，保证 NSApp.reply 恰好一次。
+    @MainActor
+    func finishTermination(_ allow: Bool) {
+        guard terminationPending else { return }
+        terminationPending = false
+        if !allow {
+            appState?.dismissSaveIssue()
+            reopenMainWindow?()
+        }
+        NSApp.reply(toApplicationShouldTerminate: allow)
     }
 }
 
@@ -40,7 +93,7 @@ struct PostmeApp: App {
 
     var body: some Scene {
         Window("postme", id: "main") {
-            ContentView()
+            ContentView(appDelegate: appDelegate)
                 .environment(app)
         }
         .defaultSize(width: 1180, height: 760)

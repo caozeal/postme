@@ -1,0 +1,32 @@
+name: Swift tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: swift test (full Xcode toolchain)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcode-select -p
+          swift --version
+          xcrun --find xctest
+
+      # The bundled Command Line Tools on the developer's Mac lack XCTest and the
+      # SwiftUI macro plugin, so the full suite can only run on a runner with Xcode.
+      # GUILanguageRenderTests is opt-in (POSTME_GUI_VERIFY=1) and stays skipped
+      # here: it needs screen-recording permission and a visible window.
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test

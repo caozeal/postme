@@ -24,12 +24,22 @@ final class PersistenceService {
     private let workspaceURL: URL
     private let tabsURL: URL
     private let historyURL: URL
+    private let examplesURL: URL
     private var saveTask: Task<Void, Never>?
 
     /// 保存序号。每次 `scheduleSave` / `saveNow` 自增，写盘时用它丢弃过期的快照。
     /// 单靠 `Task.cancel()` 不够：任务可能已经越过取消检查、正排队等写队列，
     /// 那样一个更旧的快照会在 `saveNow` 之后落盘，把新数据盖回去。
     private var saveGeneration = 0
+
+    /// 最近一次「全部落盘成功」的序号。与 `saveGeneration` 的差值就是「还有没有
+    /// 改动没写到磁盘」，比 `EditorTab.isDirty`（草稿 vs 已保存请求）更贴近这里的语义。
+    private(set) var lastCommittedGeneration = 0
+    var hasUnflushedChanges: Bool { saveGeneration > lastCommittedGeneration }
+
+    /// 每次落盘（防抖或立即）都把结果送回主线程，由 AppState 决定界面怎么显示。
+    /// 存闭包而不是反向依赖 AppState，持久化层保持可独立测试。
+    var onSaveResult: ((SaveResult, Int) -> Void)?
 
     /// 串行写队列。
     /// 串行的意义是保证落盘顺序：并发队列下，「防抖写」与「立即写」可能乱序完成，
@@ -42,19 +52,15 @@ final class PersistenceService {
     private let writeState = WriteState()
 
     init(fileName: String = "workspace.json", directory: URL? = nil) {
-        let base: URL
-        if let directory {
-            base = directory
-        } else {
-            let support = FileManager.default
-                .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-                .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-            base = support.appendingPathComponent("postme", isDirectory: true)
-        }
+        let base = directory ?? WorkspaceDirectory.defaultURL()
         self.directory = base
         self.workspaceURL = base.appendingPathComponent(fileName)
         self.tabsURL = base.appendingPathComponent("tabs.json")
         self.historyURL = base.appendingPathComponent("history.json")
+        self.examplesURL = base.appendingPathComponent("examples.json")
+        // 基准取构造时的磁盘状态：不少用例不调 load() 就直接 saveNow，
+        // 空基准会让第一次保存被误判成冲突。
+        self.writeState.fingerprint = DiskFingerprint.capture(directory: base)
     }
 
     /// 存储目录（供设置界面展示）。三个文件都在这个目录里。
@@ -71,6 +77,19 @@ final class PersistenceService {
     ///   （v4 及更早的单文件格式），并在下一次保存时写成独立的侧车；
     /// - 侧车损坏 → 备份该侧车，对应那一节为空（核心文件仍可用）。
     func load() -> Workspace {
+        // load() 会连读多份文件，且 corrupt 备份会 moveItem；在锁内读可避免读到
+        // 别的进程写了一半的跨文件快照。抢不到锁时仍要读（读不该因别人正在写而
+        // 失败），只是这一次的一致性没有额外保证。
+        do {
+            return try WorkspaceLock.withExclusiveLock(directory: directory) { loadUnlocked() }
+        } catch {
+            return loadUnlocked()
+        }
+    }
+
+    /// 不加锁的载入主体，供 `load()` 与 `reloadFromDisk()` 复用。
+    /// 重载路径已经持锁，绝不能在这里再套一层（flock 同进程重复 open 会自冲突）。
+    private func loadUnlocked() -> Workspace {
         var workspace = loadWorkspaceCore()
 
         // 侧车存在就以它为准（哪怕它是空数组）；不存在才回落到 v4 单文件里的旧键。
@@ -96,7 +115,31 @@ final class PersistenceService {
         writeState.core = nil
         writeState.tabs = tabsBaseline
         writeState.history = historyBaseline
+        // 基准必须在备份副作用之后取，否则「坏文件被搬走」会让自己下次保存误报冲突。
+        writeState.fingerprint = DiskFingerprint.capture(directory: directory)
+        writeState.failedSections = []
         return workspace
+    }
+
+    /// 丢弃在途的防抖写，把磁盘内容重新读进内存基准。
+    ///
+    /// 光 `saveTask?.cancel()` 不够：已经越过取消检查、排在 writeQueue 上的旧任务
+    /// 携带的 generation 可能仍大于 `state.generation`，会把重载前的快照写回去。
+    /// 所以还要把 `state.generation` 顶到最新，让所有在途旧任务一律变成 `.stale`。
+    @discardableResult
+    func reloadFromDisk() -> Workspace {
+        saveTask?.cancel()
+        saveGeneration += 1
+        let generation = saveGeneration
+        writeQueue.sync { writeState.generation = generation }
+        let loaded: Workspace
+        do {
+            loaded = try WorkspaceLock.withExclusiveLock(directory: directory) { loadUnlocked() }
+        } catch {
+            loaded = loadUnlocked()
+        }
+        lastCommittedGeneration = generation
+        return loaded
     }
 
     /// 生成不与现有文件冲突的备份路径。
@@ -118,7 +161,7 @@ final class PersistenceService {
     func scheduleSave(_ workspace: Workspace) {
         saveTask?.cancel()
         saveGeneration += 1
-        let paths = PersistencePaths(directory: directory, workspace: workspaceURL, tabs: tabsURL, history: historyURL)
+        let paths = persistencePaths()
         let job = FlushJob(workspace: workspace,
                            state: writeState,
                            paths: paths,
@@ -128,25 +171,72 @@ final class PersistenceService {
             guard !Task.isCancelled, let self else { return }
             let queue = self.writeQueue
             queue.async {
-                Self.flush(job.workspace, paths: job.paths, state: job.state, generation: job.generation)
+                let result = Self.flush(job.workspace, paths: job.paths, state: job.state, generation: job.generation)
+                Task { @MainActor in
+                    self.apply(result, generation: job.generation)
+                }
             }
         }
     }
 
-    /// 立即保存，**返回时数据已落盘**；返回所有发生变化的文件是否都写入成功。
+    /// 立即保存，返回完整结果。**返回时数据已落盘**。
     ///
-    /// 必须同步：`applicationWillTerminate` 返回后进程随即退出，若只把写盘丢给后台队列，
+    /// 必须同步：退出流程要在返回前知道「到底写成功没有」，若只把写盘丢给后台队列，
     /// 那个块不保证来得及执行，防抖窗口内的改动就会丢失。
     /// 用串行队列 `sync` 还能顺带保证：先前排队的异步写先完成，不会乱序覆盖。
     @discardableResult
-    func saveNow(_ workspace: Workspace) -> Bool {
+    func flushNow(_ workspace: Workspace) -> SaveResult {
         saveTask?.cancel()
         saveGeneration += 1
         let generation = saveGeneration
-        let paths = PersistencePaths(directory: directory, workspace: workspaceURL, tabs: tabsURL, history: historyURL)
-        return writeQueue.sync {
+        let paths = persistencePaths()
+        let result = writeQueue.sync {
             Self.flush(workspace, paths: paths, state: writeState, generation: generation)
         }
+        apply(result, generation: generation)
+        return result
+    }
+
+    /// 保留旧的 Bool 入口：既有测试与调用点依赖它，详细结果走 `onSaveResult` 旁路。
+    @discardableResult
+    func saveNow(_ workspace: Workspace) -> Bool {
+        flushNow(workspace).isSuccess
+    }
+
+    /// 把一次落盘结果送回主线程。过期结果也要送（调用方要能观察 `.stale`），
+    /// 但只有成功且序号更新时才推进「已提交」水位。
+    private func apply(_ result: SaveResult, generation: Int) {
+        if case .succeeded = result, generation > lastCommittedGeneration {
+            lastCommittedGeneration = generation
+        }
+        onSaveResult?(result, generation)
+    }
+
+    /// `examples.json` 的写入同样要经过 CAS 与同一把锁，否则它会绕过基准、
+    /// 与三文件写入抢改指纹，形成第二处静默覆盖。
+    @discardableResult
+    func saveExamples(_ examples: [ResponseExample]) -> SaveResult {
+        let paths = persistencePaths()
+        let result = writeQueue.sync {
+            Self.flushExamples(examples, paths: paths, state: writeState)
+        }
+        onSaveResult?(result, saveGeneration)
+        return result
+    }
+
+    private func persistencePaths() -> PersistencePaths {
+        PersistencePaths(directory: directory,
+                         workspace: workspaceURL,
+                         tabs: tabsURL,
+                         history: historyURL,
+                         examples: examplesURL)
+    }
+
+    /// UI 检测用：当前磁盘与基准相比哪些文件变了。
+    /// 写前的权威检查仍在 `flush` 的 CAS 临界区里，这里只给界面一个提前提示。
+    func externalChangedFiles() -> [String] {
+        let baseline = writeQueue.sync { writeState.fingerprint }
+        return DiskFingerprint.capture(directory: directory).differingFiles(from: baseline)
     }
 
     // MARK: - 读取
@@ -188,52 +278,104 @@ final class PersistenceService {
 
     // MARK: - 写出（只在 writeQueue 上调用）
 
-    @discardableResult
+    /// 一次落盘的完整临界区：读指纹 → 比对基准 → 写 → 重算基准，全程持短锁。
+    /// 比对全四个文件，不能按「本次只写哪节」裁剪——否则 CLI 改了 history、
+    /// GUI 只写 tabs 时会漏检，之后整份旧 history 会盖回去。
     nonisolated private static func flush(_ workspace: Workspace,
                                           paths: PersistencePaths,
                                           state: WriteState,
-                                          generation: Int) -> Bool {
+                                          generation: Int) -> SaveResult {
         // 比队列里更旧的快照直接丢弃：它来自一次已经被后一次保存取代的调度。
-        guard generation > state.generation else { return true }
+        // 注意返回 .stale 而不是「成功」，否则过期结果会把真实失败标记清掉。
+        guard generation > state.generation else { return .stale }
         state.generation = generation
-        var succeeded = true
 
-        let tabs = TabsSnapshot(activeTabID: workspace.activeTabID,
-                                tabs: workspace.tabs.map(TabRecord.init))
-        if state.tabs != tabs {
-            if let data = encode(TabsFile(version: Workspace.currentVersion,
-                                          activeTabID: tabs.activeTabID,
-                                          tabs: tabs.tabs)),
-               performWrite(data, to: paths.tabs, directory: paths.directory, name: "tabs.json") {
-                state.tabs = tabs
-            } else {
-                succeeded = false
-            }
-        }
+        do {
+            return try WorkspaceLock.withExclusiveLock(directory: paths.directory) {
+                let current = DiskFingerprint.capture(directory: paths.directory)
+                let changed = current.differingFiles(from: state.fingerprint)
+                    .filter { !state.failedSections.contains($0) }
+                if !changed.isEmpty {
+                    return SaveResult.conflict(.fingerprintMismatch(changed))
+                }
 
-        // 历史按上限裁剪后再落盘：读入的旧文件可能超限，编码时顺手收敛。
-        // 比较用裁剪后的结果，否则每次保存都会因为"原始数组没变、落盘数组被裁"而重写。
-        let cappedHistory = Array(workspace.history.prefix(Workspace.historyLimit))
-        if state.history != cappedHistory {
-            if let data = encode(HistoryFile(version: Workspace.currentVersion, history: cappedHistory)),
-               performWrite(data, to: paths.history, directory: paths.directory, name: "history.json") {
-                state.history = cappedHistory
-            } else {
-                succeeded = false
+                var failedNames: [String] = []
+                let tabs = TabsSnapshot(activeTabID: workspace.activeTabID,
+                                        tabs: workspace.tabs.map(TabRecord.init))
+                if state.tabs != tabs {
+                    if let data = encode(TabsFile(version: Workspace.currentVersion,
+                                                  activeTabID: tabs.activeTabID,
+                                                  tabs: tabs.tabs)),
+                       performWrite(data, to: paths.tabs, directory: paths.directory, name: "tabs.json") {
+                        state.tabs = tabs
+                    } else {
+                        failedNames.append("tabs.json")
+                    }
+                }
+
+                // 历史按上限裁剪后再落盘：读入的旧文件可能超限，编码时顺手收敛。
+                // 比较用裁剪后的结果，否则每次保存都会因为"原始数组没变、落盘数组被裁"而重写。
+                let cappedHistory = Array(workspace.history.prefix(Workspace.historyLimit))
+                if state.history != cappedHistory {
+                    if let data = encode(HistoryFile(version: Workspace.currentVersion, history: cappedHistory)),
+                       performWrite(data, to: paths.history, directory: paths.directory, name: "history.json") {
+                        state.history = cappedHistory
+                    } else {
+                        failedNames.append("history.json")
+                    }
+                }
+                // v4 的核心文件仍含页签和历史。只有两个侧车都已成功落盘，才可移除旧键；
+                // 否则一次写入失败或进程中断会让尚未迁出的数据失去唯一副本。
+                let core = CoreSnapshot(workspace)
+                if failedNames.isEmpty && state.core != core {
+                    if let data = encode(workspace),
+                       performWrite(data, to: paths.workspace, directory: paths.directory, name: "workspace.json") {
+                        state.core = core
+                    } else {
+                        failedNames.append("workspace.json")
+                    }
+                }
+
+                // 即使部分失败也要重算基准：tabs 已经换了 inode，若仍留旧基准，
+                // 下一次重试会把自己刚写的内容判成外部改动，形成死循环。
+                state.fingerprint = DiskFingerprint.capture(directory: paths.directory)
+                state.failedSections = Set(failedNames)
+                return failedNames.isEmpty ? .succeeded : .failed(failedNames)
             }
+        } catch WorkspaceLockError.busy {
+            return .conflict(.busy)
+        } catch {
+            return .failed([paths.workspace.lastPathComponent])
         }
-        // v4 的核心文件仍含页签和历史。只有两个侧车都已成功落盘，才可移除旧键；
-        // 否则一次写入失败或进程中断会让尚未迁出的数据失去唯一副本。
-        let core = CoreSnapshot(workspace)
-        if succeeded && state.core != core {
-            if let data = encode(workspace),
-               performWrite(data, to: paths.workspace, directory: paths.directory, name: "workspace.json") {
-                state.core = core
-            } else {
-                succeeded = false
+    }
+
+    /// examples.json 与三文件共用同一套 CAS：先比对全目录指纹，再整份写，最后重算基准。
+    nonisolated private static func flushExamples(_ examples: [ResponseExample],
+                                                  paths: PersistencePaths,
+                                                  state: WriteState) -> SaveResult {
+        do {
+            return try WorkspaceLock.withExclusiveLock(directory: paths.directory) {
+                let current = DiskFingerprint.capture(directory: paths.directory)
+                let changed = current.differingFiles(from: state.fingerprint)
+                    .filter { !state.failedSections.contains($0) }
+                if !changed.isEmpty {
+                    return SaveResult.conflict(.fingerprintMismatch(changed))
+                }
+                guard let data = encode(examples),
+                      performWrite(data, to: paths.examples, directory: paths.directory, name: "examples.json") else {
+                    state.fingerprint = DiskFingerprint.capture(directory: paths.directory)
+                    state.failedSections = ["examples.json"]
+                    return .failed(["examples.json"])
+                }
+                state.fingerprint = DiskFingerprint.capture(directory: paths.directory)
+                state.failedSections = []
+                return .succeeded
             }
+        } catch WorkspaceLockError.busy {
+            return .conflict(.busy)
+        } catch {
+            return .failed(["examples.json"])
         }
-        return succeeded
     }
 
     nonisolated private static func encode<T: Encodable>(_ value: T) -> Data? {
@@ -282,12 +424,13 @@ private struct FlushJob: @unchecked Sendable {
     var generation: Int
 }
 
-/// 三个文件的路径。值类型，方便把 nonisolated static 的写盘逻辑与实例解耦。
+/// 四个文件的路径。值类型，方便把 nonisolated static 的写盘逻辑与实例解耦。
 private struct PersistencePaths: Sendable {
     var directory: URL
     var workspace: URL
     var tabs: URL
     var history: URL
+    var examples: URL
 }
 
 /// 一次写入的各节内容。内容没变就跳过整份编码与写盘。
@@ -300,6 +443,12 @@ private final class WriteState {
     var core: CoreSnapshot?
     var tabs: TabsSnapshot?
     var history: [HistoryEntry]?
+    /// 上次 flush 未能落盘的文件。修复故障（删掉挡路的目录、恢复权限）本身就是磁盘
+    /// 变化，这些文件的变化不该被 CAS 当成「别的进程写过」，否则重试永远报冲突。
+    var failedSections: Set<String> = []
+    /// 上次成功落盘（或 load/reload）后四个文件的磁盘状态，CAS 的基准。
+    /// 与 core/tabs/history 一样只在写队列上读写。
+    var fingerprint = DiskFingerprint(entries: [:])
 }
 
 /// 核心文件的持久化内容。与 `Workspace` 的区别：不含页签与历史。

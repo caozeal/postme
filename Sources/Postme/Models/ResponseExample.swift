@@ -127,24 +127,8 @@ struct ResponseExampleStore {
         return (try? decoder.decode(LossyExampleList.self, from: data).examples) ?? []
     }
 
-    @discardableResult
-    func save(_ examples: [ResponseExample]) -> Bool {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(examples) else { return false }
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: url, options: .atomic)
-            return true
-        } catch {
-            print("[postme] 保存响应示例失败: \(error)")
-            return false
-        }
-    }
+    /// 写入统一走 `PersistenceService.saveExamples`：那里有工作区锁、磁盘指纹 CAS
+    /// 与基准重算，不能留第二条绕过这些保护的写路径。
 }
 
 /// 顶层数组的逐元素容错解码：单条坏示例只丢自己，不连坐整份文件。

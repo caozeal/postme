@@ -34,8 +34,20 @@ final class CLIWorkspace {
     var localizer: Localizer { Localizer(language: workspace.settings.language ?? .systemDefault) }
 
     private func save() throws {
-        guard persistence.saveNow(workspace) else {
-            throw CLIError("Failed to write workspace in \(persistence.storagePath)")
+        switch persistence.flushNow(workspace) {
+        case .succeeded:
+            return
+        case .failed(let names):
+            throw CLIError("Failed to write workspace in \(persistence.storagePath): \(names.joined(separator: ", "))")
+        case .stale:
+            // flushNow 每次自增 generation，理论上不会过期；仍按操作失败处理，不静默当成功。
+            throw CLIError("Failed to write workspace in \(persistence.storagePath): stale save generation")
+        case .conflict(.busy):
+            throw CLIError.workspaceBusy(persistence.storagePath)
+        case .conflict(.fingerprintMismatch(let files)):
+            // 不自动 reload 重试：批处理命令已改内存，自动重试会掩盖冲突。
+            // CAS 在写任何字节之前拦截，所以「失败 = 什么都没发生」，重跑整条命令是安全的。
+            throw CLIError.workspaceConflict(persistence.storagePath, changedFiles: files)
         }
     }
 

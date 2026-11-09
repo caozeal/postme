@@ -2,6 +2,32 @@ import SwiftUI
 import AppKit
 import Observation
 
+// MARK: - 落盘问题的界面状态
+
+enum SaveIssueKind: Equatable {
+    case writeFailed([String])
+    case conflict(ConflictReason)
+}
+
+/// 弹窗出现的场景，决定按钮组。
+enum SaveIssueContext: Equatable {
+    case toolbar
+    case externalChange
+    case exit
+}
+
+/// 界面状态存「键 + 参数」而不是生成好的字符串：切语言时 `setLanguage` 会清
+/// `alertMessage`，存译文会让提示凭空消失；渲染时取词才能自动重译。
+struct SaveIssue: Identifiable, Equatable {
+    let id = UUID()
+    var kind: SaveIssueKind
+    var context: SaveIssueContext
+    var titleKey: L10nKey
+    var messageKey: L10nKey
+    var arguments: [String]
+    var attempts: Int = 1
+}
+
 /// 请求编辑区里的分页。
 ///
 /// **声明顺序即界面上分段控件的顺序**（`CaseIterable` 的 `allCases` 按声明顺序），
@@ -190,6 +216,17 @@ final class AppState {
         var text: String
     }
 
+    /// 未解决的落盘问题。只有成功落盘、或无脏数据时成功重载才清空。
+    var saveIssue: SaveIssue?
+    /// 弹窗展示开关：用户点「稍后」只收起弹窗，问题仍在工具栏常驻可见。
+    var showSaveIssueAlert: Bool = false
+    /// 退出决策的回传目标。由 ContentView.onAppear 注入；
+    /// 不能用 `NSApp.delegate as? AppDelegate`（SwiftUI 装的是转发代理，转换会失败，
+    /// 那样「取消 / 仍要退出」点下去 NSApp.reply 永远不调用，进程卡在退出待决）。
+    weak var appDelegate: AppDelegate?
+    /// 退出准备期间的结果回传不走常规状态机，由 prepareForTermination 自己裁定。
+    private var isPreparingTermination = false
+
     // MARK: - 侧栏态
 
     var searchKeyword: String = ""
@@ -275,14 +312,14 @@ final class AppState {
         // 示例引用请求节点 id：先把工作区刷到磁盘，避免「示例已写、节点还在防抖窗口里」
         // 的瞬间崩溃导致下次启动把这条示例当成孤儿清掉。
         saveImmediately()
-        exampleStore.save(examples)
+        _ = persistence.saveExamples(examples)
         showSaveExampleSheet = false
         saveExampleName = ""
     }
 
     func deleteExample(id: UUID) {
         examples.removeAll { $0.id == id }
-        exampleStore.save(examples)
+        _ = persistence.saveExamples(examples)
         if viewingExample?.id == id { viewingExample = nil }
     }
 
@@ -395,40 +432,61 @@ final class AppState {
             loaded.settings.language = languageOverride
         }
         self.persistence = persistence
-        self.workspace = loaded
         self.exampleStore = ResponseExampleStore(directory: persistence.directoryURL)
+        // 存储属性先给初值，真正的构建统一走 applyLoadedState：init 与重载共用
+        // 同一套「≥1 页签 / activeTabID 有效 / 项目不变量 / 孤儿清理」兜底规则。
+        self.workspace = Workspace()
+        self.examples = []
+        self.tabs = []
+        self.activeTabID = UUID()
+
+        applyLoadedState(loaded, storedExamples: exampleStore.load())
+
+        // 所有写路径（防抖 / 立即 / 示例）的结果都回到这里。
+        persistence.onSaveResult = { [weak self] result, generation in
+            self?.handleSaveResult(result, generation: generation)
+        }
+        // 退出改由 AppDelegate.applicationShouldTerminate 拦截：willTerminate 发生时
+        // 已经决定退出，既拿不到落盘结果也无法弹窗或阻止退出。
+    }
+
+    /// 从一份磁盘快照重建持久化状态。
+    private func applyLoadedState(_ loaded: Workspace, storedExamples: [ResponseExample]) {
+        let previousTabs = tabs
+        workspace = loaded
         // 请求节点被删掉后，它的示例没有主人：载入时清理，避免 examples.json 只增不减。
-        let storedExamples = self.exampleStore.load()
-        self.examples = storedExamples.filter { example in
+        examples = storedExamples.filter { example in
             loaded.projects.contains { $0.children.findNode(id: example.requestNodeID) != nil }
         }
 
-        // 页签恢复：文件里的页签 + 当前页签。一个都没有（全新工作区 / 空 tabs）
-        // 就补一个空页签，维持「编辑器恒有一格」的不变量。
-        let restored = loaded.tabs
+        // 按 id 把不落盘的运行期状态搬到新页签：响应、流、分页、错误提示不该因为
+        // 磁盘被别的进程改过就凭空消失。
+        let oldByID = Dictionary(uniqueKeysWithValues: previousTabs.map { ($0.id, $0) })
+        let restored = loaded.tabs.map { tab -> EditorTab in
+            var fresh = EditorTab(id: tab.id, draft: tab.draft, baseline: tab.baseline, nodeID: tab.nodeID)
+            if let old = oldByID[tab.id] { fresh.copyRuntimeState(from: old) }
+            return fresh
+        }
         if restored.isEmpty {
             let fresh = EditorTab(draft: APIRequest())
-            self.tabs = [fresh]
-            self.activeTabID = fresh.id
+            tabs = [fresh]
+            activeTabID = fresh.id
         } else {
-            self.tabs = restored
-            self.activeTabID = loaded.activeTabID ?? restored[0].id
+            tabs = restored
+            activeTabID = loaded.activeTabID.flatMap { id in
+                restored.contains { $0.id == id } ? id : nil
+            } ?? restored[0].id
         }
 
-        // 退出前强制落盘，避免防抖窗口内的改动丢失。
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.saveImmediately()
-            }
+        // 磁盘上被移除的页签：取消在飞请求、释放归并器，避免它们留在内存里。
+        let surviving = Set(tabs.map(\.id))
+        for old in previousTabs where !surviving.contains(old.id) {
+            if old.isSending { executor().cancel(token: old.id) }
+            liveMergers[old.id] = nil
         }
 
-        // 「至少一个项目 + 当前项目有效」的生命周期不变量：
-        // 全新工作区、旧文件迁移出 0 个项目、activeProjectID 悬空，都在这里兜底。
-        // 只改内存不落盘——下一次 save() 会自然带上。
+        // 「至少一个项目 + 当前项目有效」的生命周期不变量：全新工作区、旧文件迁移
+        // 出 0 个项目、activeProjectID 悬空，都在这里兜底。只改内存不落盘。
         ensureActiveProject()
 
         // 一次性归属：隔离改造前的历史记录没有 projectID，真实归属已不可考。
@@ -441,13 +499,205 @@ final class AppState {
             }
         }
 
-        // 页签归属随页签一起恢复。不恢复的话，重启后编辑器里明明还是同一条请求，
-        // ⌘S 却当成新请求弹窗——每重启一次就多一条重复。
-        // 归属按**全局**查找（页签可以停留在别的项目的请求上），不是只查当前项目。
+        // 页签归属随页签一起恢复；不恢复的话重启后 ⌘S 会当成新请求弹窗。
+        // 归属按**全局**查找（页签可以停留在别的项目的请求上）。
         dropStaleNodeReferences()
         // 当前页签的归属若在别的项目里，把当前项目切过去，侧栏高亮才对得上编辑器。
         syncProjectToActiveTab()
         syncSelectionToActiveTab()
+        // 重载后旧的 pending id 可能指向已删除的节点，确认框点下去就是空操作。
+        clearPendingTransientState()
+        refreshResponseBodyText()
+    }
+
+    private func clearPendingTransientState() {
+        pendingCloseTabID = nil
+        showTabCloseConfirm = false
+        closeAfterSave = false
+        pendingBatchCloseIDs = []
+        showBatchCloseConfirm = false
+        showEnvironmentEditor = false
+        showClearHistoryConfirm = false
+        pendingProjectActivationID = nil
+        pendingImportEnvironmentID = nil
+        showProjectSwitchConfirm = false
+        showSaveSheet = false
+        saveSheetProjectID = nil
+        saveSheetFolderID = nil
+        saveSheetTabID = nil
+        defaultSaveFolderID = nil
+        showSaveExampleSheet = false
+        viewingExample = nil
+        showCurlImport = false
+        showOpenAPIImportSheet = false
+    }
+
+    // MARK: - 落盘结果 / 外部变更 / 退出
+
+    /// 所有写路径共用的结果处理。
+    func handleSaveResult(_ result: SaveResult, generation: Int) {
+        // 退出流程有自己的状态机（三按钮 + NSApp.reply），后台结果不要插手降级它。
+        guard !isPreparingTermination, saveIssue?.context != .exit else { return }
+        switch result {
+        case .stale:
+            // 过期调度既没读盘也没写盘，绝不能把真实失败清成成功。
+            return
+        case .succeeded:
+            clearSaveIssue()
+        case .failed(let files):
+            mergeIssue(kind: .writeFailed(files),
+                      context: .toolbar,
+                      titleKey: .saveFailedTitle,
+                      messageKey: .saveFailedMessage,
+                      arguments: [files.joined(separator: ", ")])
+        case .conflict(.busy):
+            // 别人正在写的毫秒级窗口：不弹窗，短延迟重试一次，避免每 600ms 弹一次框。
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                _ = self?.flushNow()
+            }
+        case .conflict(.fingerprintMismatch(let files)):
+            checkForExternalChanges(changedFiles: files)
+        }
+    }
+
+    private func mergeIssue(kind: SaveIssueKind, context: SaveIssueContext,
+                            titleKey: L10nKey, messageKey: L10nKey, arguments: [String]) {
+        // 同一问题只弹一次（防抖会反复上报），后续只更新次数与参数。
+        if var issue = saveIssue, issue.kind == kind {
+            issue.attempts += 1
+            issue.arguments = arguments
+            saveIssue = issue
+            return
+        }
+        saveIssue = SaveIssue(kind: kind, context: context, titleKey: titleKey,
+                              messageKey: messageKey, arguments: arguments)
+        showSaveIssueAlert = true
+    }
+
+    private func clearSaveIssue() {
+        saveIssue = nil
+        showSaveIssueAlert = false
+    }
+
+    /// 立即把当前内存快照落盘并返回完整结果。
+    @discardableResult
+    func flushNow() -> SaveResult {
+        syncTabsToWorkspace()
+        return persistence.flushNow(workspace)
+    }
+
+    func retrySave() {
+        guard let kind = saveIssue?.kind else { return }
+        switch kind {
+        case .writeFailed, .conflict(.busy):
+            let result = flushNow()
+            if !result.isSuccess { restoreSaveIssueAlert() }
+        case .conflict(.fingerprintMismatch):
+            // 冲突时重写只会覆盖磁盘，正确做法是重载到磁盘版本。
+            reloadWorkspace()
+        }
+    }
+
+    /// SwiftUI 会在 alert 按钮的 action 执行完之后把 `isPresented` 置 false。
+    /// 保存仍失败时要在下一个 runloop 把弹窗重新立起来，否则用户只看到弹窗
+    /// 消失、问题却没解决（退出流程还会一直挂在 .terminateLater）。
+    private func restoreSaveIssueAlert() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.saveIssue != nil else { return }
+            self.showSaveIssueAlert = true
+        }
+    }
+
+    func dismissSaveIssue() { showSaveIssueAlert = false }
+
+    func showSaveIssueDetails() {
+        guard saveIssue != nil else { return }
+        showSaveIssueAlert = true
+    }
+
+    /// 应用重新激活时调用；保存前的 CAS 冲突也会带着文件名走进来。
+    func checkForExternalChanges(changedFiles: [String]? = nil) {
+        let files = changedFiles ?? persistence.externalChangedFiles()
+        guard !files.isEmpty else {
+            if let issue = saveIssue, case .conflict = issue.kind { clearSaveIssue() }
+            return
+        }
+        if persistence.hasUnflushedChanges {
+            // 有未落盘编辑：不能静默丢弃用户输入，交给用户二选一。
+            mergeIssue(kind: .conflict(.fingerprintMismatch(files)),
+                      context: .externalChange,
+                      titleKey: .workspaceChangedTitle,
+                      messageKey: .workspaceChangedMessage,
+                      arguments: [files.joined(separator: ", ")])
+        } else {
+            reloadWorkspace()
+        }
+    }
+
+    /// 重载入口，也是「重载并放弃我的编辑」的动作。不自动 save()：重载后
+    /// 内存已等于磁盘，再写一次只会无谓换 inode 并与别的进程抢锁。
+    func reloadWorkspace() {
+        let loaded = persistence.reloadFromDisk()
+        applyLoadedState(loaded, storedExamples: exampleStore.load())
+        clearSaveIssue()
+    }
+
+    /// 退出前最后一次权威落盘。失败时把问题升级成退出场景（三按钮弹窗）。
+    @discardableResult
+    func prepareForTermination() -> SaveResult {
+        isPreparingTermination = true
+        defer { isPreparingTermination = false }
+        let result = flushNow()
+        if result.isSuccess {
+            clearSaveIssue()
+            return result
+        }
+        let (kind, arguments): (SaveIssueKind, [String])
+        switch result {
+        case .failed(let files):
+            kind = .writeFailed(files)
+            arguments = [files.joined(separator: ", ")]
+        case .conflict(let reason):
+            kind = .conflict(reason)
+            arguments = [Self.describe(reason)]
+        case .stale, .succeeded:
+            return result
+        }
+        saveIssue = SaveIssue(kind: kind, context: .exit,
+                              titleKey: .quitSaveFailedTitle,
+                              messageKey: .saveFailedMessage,
+                              arguments: arguments)
+        showSaveIssueAlert = true
+        return result
+    }
+
+    /// 退出弹窗「重试」：成功或重载后放行，仍失败就留在原地。
+    func retryTerminationSave() {
+        let result = flushNow()
+        switch result {
+        case .succeeded:
+            clearSaveIssue()
+            resolveTermination(shouldTerminate: true)
+        case .conflict(.fingerprintMismatch):
+            reloadWorkspace()
+            resolveTermination(shouldTerminate: true)
+        default:
+            // 仍失败：SwiftUI 已把弹窗收起，必须重新立起来，否则退出流程挂在
+            // .terminateLater，用户看不到任何可点的出口。
+            restoreSaveIssueAlert()
+        }
+    }
+
+    func resolveTermination(shouldTerminate: Bool) {
+        appDelegate?.finishTermination(shouldTerminate)
+    }
+
+    private static func describe(_ reason: ConflictReason) -> String {
+        switch reason {
+        case .busy: return "workspace is busy"
+        case .fingerprintMismatch(let files): return files.joined(separator: ", ")
+        }
     }
 
     // MARK: - 语言
@@ -466,8 +716,9 @@ final class AppState {
     /// **为什么重算 `responseBodyText`**：它是收到响应时算好的字符串，里面含截断说明；
     /// 不重算的话切到英文后那段说明仍是中文。
     ///
-    /// **为什么清空 `errorMessage` / `alertMessage`**：二者是已生成的字符串，无法就地重译；
+    /// **为什么只清 `errorMessage` / `alertMessage`**：二者是已生成的字符串，无法就地重译；
     /// 留着旧语言的文本比清掉更误导。每个页签各清一遍——别的页签里也可能挂着旧语言错误。
+    /// `saveIssue` 存的是键 + 参数，渲染时才取词，切语言会自动重译，不能清。
     func setLanguage(_ language: AppLanguage?) {
         workspace.settings.language = language
         refreshResponseBodyText()

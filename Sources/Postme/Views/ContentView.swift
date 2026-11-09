@@ -3,6 +3,11 @@ import SwiftUI
 /// 主界面外壳：左侧项目切换器 + 目录树，右侧「请求编辑 / 响应」上下分栏，工具栏放环境切换。
 struct ContentView: View {
     @Environment(AppState.self) private var app
+    @Environment(\.openWindow) private var openWindow
+    /// AppKit 委托由 SwiftUI 的属性包装直接传入。不能用 `NSApp.delegate as? AppDelegate`：
+    /// `@NSApplicationDelegateAdaptor` 装进 NSApp 的是转发代理，类型转换会失败，
+    /// 那样退出拦截拿不到 appState，会静默跳过退出前保存。
+    var appDelegate: AppDelegate? = nil
 
     /// 请求编辑区的最小高度（查询参数/请求头表格至少要能露出一行加页脚）。
     private static let requestPaneMinHeight: CGFloat = 200
@@ -54,6 +59,17 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 environmentPicker
+            }
+            // 常驻标记：弹窗可以收起，但「有保存问题」不能从界面消失。
+            ToolbarItem(placement: .status) {
+                if app.saveIssue != nil {
+                    Button {
+                        app.showSaveIssueDetails()
+                    } label: {
+                        Label(app.t(.saveFailedBadge), systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
+                }
             }
         }
         .sheet(isPresented: $app.showEnvironmentEditor) {
@@ -128,6 +144,38 @@ struct ContentView: View {
             Button(app.t(.okButton), role: .cancel) { app.alertMessage = nil }
         } message: { message in
             Text(message.text)
+        }
+        // 单个枚举驱动的弹窗：ContentView 已挂 3 个 .alert，再挂多个同级会互相压制。
+        .alert(
+            app.t(app.saveIssue?.titleKey ?? .saveFailedTitle),
+            isPresented: Binding(
+                get: { app.showSaveIssueAlert },
+                set: { if !$0 { app.dismissSaveIssue() } }
+            ),
+            presenting: app.saveIssue
+        ) { issue in
+            switch issue.context {
+            case .externalChange:
+                Button(app.t(.workspaceChangedReload), role: .destructive) { app.reloadWorkspace() }
+                Button(app.t(.workspaceChangedKeep)) { app.dismissSaveIssue() }
+                Button(app.t(.workspaceChangedRecheck)) { app.checkForExternalChanges() }
+            case .exit:
+                Button(app.t(.saveFailedRetry)) { app.retryTerminationSave() }
+                Button(app.t(.quitAnyway), role: .destructive) { app.resolveTermination(shouldTerminate: true) }
+                Button(app.t(.cancelButton), role: .cancel) { app.resolveTermination(shouldTerminate: false) }
+            case .toolbar:
+                Button(app.t(.saveFailedRetry)) { app.retrySave() }
+                Button(app.t(.saveFailedLater), role: .cancel) { app.dismissSaveIssue() }
+            }
+        } message: { issue in
+            // 文案只有一个 %@ 参数；取词在渲染时完成，切语言会自动重译。
+            Text(app.t(issue.messageKey, issue.arguments.first ?? ""))
+        }
+        .onAppear {
+            guard let appDelegate else { return }
+            appDelegate.appState = app
+            app.appDelegate = appDelegate
+            appDelegate.reopenMainWindow = { openWindow(id: "main") }
         }
     }
 

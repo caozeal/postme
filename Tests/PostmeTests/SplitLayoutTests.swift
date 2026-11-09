@@ -15,7 +15,7 @@ final class SplitLayoutTests: XCTestCase {
     /// 保活到进程结束：测试中途关闭窗口会让 SwiftUI 在拆解阶段访问已释放的 layer。
     private var retainedWindows: [NSWindow] = []
 
-    private func measure(contentHeight: CGFloat) throws -> (request: CGFloat, response: CGFloat) {
+    private func measure(contentHeight: CGFloat) throws -> (request: CGFloat, response: CGFloat, total: CGFloat) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("postme-split-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -55,26 +55,42 @@ final class SplitLayoutTests: XCTestCase {
         }
         let heights = split.arrangedSubviews.map(\.frame.height)
         guard heights.count >= 2 else { throw XCTSkip("分栏子视图不足") }
-        return (heights[0], heights[1])
+        return (heights[0], heights[1], split.frame.height)
     }
 
+    /// 窗口实际高度会被 AppKit 改写（标题栏、屏幕可用区域），`contentHeight` 只是请求值：
+    /// 同一台机器上 800 可能落成 832，1100 也可能被压到 908。所以断言按**实测总高**的相对
+    /// 关系写，而不是固定像素，否则换个环境就时红时绿。布局契约仍是「请求区最多占 320，
+    /// 其余全归响应区」；改回只写 idealHeight 会退化成对半分，下面的断言照样会红。
     func testResponsePaneKeepsItsMinimumHeight() throws {
-        let (request, response) = try measure(contentHeight: 800)
-        XCTAssertGreaterThanOrEqual(response, 500, "响应区应保住最小高度（实测 \(Int(response))，请求区 \(Int(request))）")
-        XCTAssertLessThanOrEqual(request, 320, "请求区不该抢走一半以上（实测 \(Int(request))）")
+        let (request, response, total) = try measure(contentHeight: 800)
+        let budget: CGFloat = 320
+        let tolerance: CGFloat = 20   // 分隔条厚度与布局取整
+        XCTAssertGreaterThanOrEqual(
+            response, total - budget - tolerance,
+            "响应区应拿到请求区预算之外的全部高度（实测 \(Int(response))/\(Int(total))，请求区 \(Int(request))）"
+        )
+        XCTAssertLessThanOrEqual(
+            request, budget + tolerance,
+            "请求区不该超过预算（实测 \(Int(request))/\(Int(total))）"
+        )
+        XCTAssertGreaterThan(
+            response, total / 2,
+            "响应区应明显大于对半分（实测 \(Int(response))/\(Int(total))）"
+        )
     }
 
     /// 请求区自己也得能看：小窗口下两栏都保住下限。
     func testBothPanesStayUsableInSmallWindow() throws {
-        let (request, response) = try measure(contentHeight: 620)
+        let (request, response, _) = try measure(contentHeight: 620)
         XCTAssertGreaterThanOrEqual(request, 200, "请求区下限 200")
         XCTAssertGreaterThanOrEqual(response, 200, "响应区下限 200")
     }
 
     /// 大窗口：多出来的高度归响应区，而不是继续对半分。
     func testTallWindowGivesExtraHeightToResponse() throws {
-        let (small_request, small_response) = try measure(contentHeight: 800)
-        let (tall_request, tall_response) = try measure(contentHeight: 1100)
+        let (small_request, small_response, _) = try measure(contentHeight: 800)
+        let (tall_request, tall_response, _) = try measure(contentHeight: 1100)
         XCTAssertGreaterThan(tall_response, small_response, "拉高窗口应让响应区变大")
         XCTAssertLessThanOrEqual(tall_request - small_request, 20, "请求区不应跟着涨（实测涨了 \(Int(tall_request - small_request))）")
     }

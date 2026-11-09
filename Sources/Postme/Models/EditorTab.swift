@@ -139,6 +139,21 @@ struct EditorTab: Identifiable, Codable {
     /// 是否有未保存的修改。
     var isDirty: Bool { draft != baseline }
 
+    /// 工作区重载时按 id 把不落盘的运行期状态从旧页签搬过来。
+    /// 磁盘只带 `draft` / `baseline` / `nodeID`，其余字段都是进程内状态，
+    /// 不该因为别的进程改过磁盘就凭空消失。
+    mutating func copyRuntimeState(from old: EditorTab) {
+        requestSection = old.requestSection
+        responseSection = old.responseSection
+        stream = old.stream
+        response = old.response
+        responseBodyText = old.responseBodyText
+        errorMessage = old.errorMessage
+        unresolvedVariables = old.unresolvedVariables
+        unresolvedPathParams = old.unresolvedPathParams
+        isSending = old.isSending
+    }
+
     /// 清掉与某个请求相关的运行期状态（换请求内容时用）。
     mutating func clearResponse() {
         response = nil

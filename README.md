@@ -180,6 +180,7 @@ Accounts, cloud sync, pre-request scripts and assertions, team collaboration.
 ### Requirements
 - macOS 14.0 or later
 - Xcode or a Swift toolchain (developed and verified with Swift 6.3 / Xcode 26)
+- On this Mac, the bundle script defaults to the macosx26.5 SDK because the 27.0 command-line SDK lacks the SwiftUI macro plugin. Set `SDK=macosx27.0 make app` to override it.
 
 ### Commands
 
@@ -225,12 +226,20 @@ build/postme request delete <request-uuid> --yes
   to stdout when `--output` is omitted or `-`.
 - `--data-dir <dir>` (or `POSTME_DATA_DIR`) overrides the normal data directory, which is useful for
   isolated jobs and tests. All writes are synchronous. Exit codes are `0` for success, `1` for an
-  operation failure and `2` for invalid usage; deleting data or clearing history requires `--yes`.
+  operation failure, `2` for invalid usage and `3` for a workspace concurrency conflict. With
+  `--json`, errors also carry a stable `code` (`workspace_busy` or `workspace_conflict`) alongside
+  `error` and `exitCode`. Deleting data or clearing history requires `--yes`.
+  `POSTME_DATA_DIR` also applies to the GUI, which otherwise ignores `HOME` overrides.
 - Run `build/postme <command>` for projects, requests, environments and history. Environment
   commands also support `use`, `deactivate`, `unset` and `delete`.
 
-> **Close the GUI before CLI writes.** The JSON store currently has no cross-process lock or merge:
-> a running GUI can overwrite a concurrent CLI change (and vice versa). Read-only commands are safe.
+> **Concurrent writes are rejected, never silently merged.** GUI and CLI take a short exclusive
+> lock only while writing and compare a disk fingerprint before every write (optimistic CAS). A
+> write command that finds the workspace busy or changed on disk fails with exit code 3 and
+> **writes nothing** — retry it once the other process is done. Read-only commands are unaffected,
+> though they may see a snapshot that is inconsistent across the four JSON files (each individual
+> file is still written atomically). The GUI checks for external changes when it becomes active
+> and reloads; if you have unsaved edits it asks before discarding them.
 
 > **Why not just `swift run`**: a bare binary launches as an accessory process — the window is not
 > brought forward and there is no application menu. `NSApplicationDelegateAdaptor` provides an

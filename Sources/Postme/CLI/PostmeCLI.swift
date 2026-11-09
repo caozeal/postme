@@ -3,16 +3,38 @@ import Foundation
 struct CLIError: Error, CustomStringConvertible {
     let message: String
     let exitCode: Int32
+    /// 机器可读的稳定标识；普通错误为 nil，保持旧行为。
+    let code: String?
 
-    init(_ message: String, exitCode: Int32 = 1) {
+    init(_ message: String, exitCode: Int32 = 1, code: String? = nil) {
         self.message = message
         self.exitCode = exitCode
+        self.code = code
     }
 
     var description: String { message }
 
     static func usage(_ message: String) -> CLIError {
         CLIError(message, exitCode: 2)
+    }
+
+    /// 工作区并发冲突专用退出码：脚本要能区分「重试可能成功的瞬时冲突」与「命令本身有问题」。
+    static let workspaceConflictExitCode: Int32 = 3
+
+    static func workspaceBusy(_ path: String) -> CLIError {
+        CLIError(
+            "Workspace is busy (another postme process is writing to \(path)); the command did not write anything — retry it.",
+            exitCode: workspaceConflictExitCode,
+            code: "workspace_busy"
+        )
+    }
+
+    static func workspaceConflict(_ path: String, changedFiles: [String]) -> CLIError {
+        CLIError(
+            "Workspace changed on disk since it was read (\(changedFiles.joined(separator: ", ")) in \(path)); the command did not write anything — retry it.",
+            exitCode: workspaceConflictExitCode,
+            code: "workspace_conflict"
+        )
     }
 }
 
@@ -360,7 +382,15 @@ enum PostmeCLI {
         try options.allow(values: ["output"])
         let data = try store.exportPostman(project: p[1])
         if let output = options.value("output"), output != "-" {
-            let url = URL(fileURLWithPath: (output as NSString).expandingTildeInPath)
+            let url = URL(fileURLWithPath: (output as NSString).expandingTildeInPath).standardizedFileURL
+            // 导出自己的结果不碰工作区，但 --output 指到受管文件就等于绕过锁直接覆盖。
+            let dataDir = URL(fileURLWithPath: store.storagePath, isDirectory: true).standardizedFileURL
+            let protected = Set((WorkspaceDirectory.managedFiles + [WorkspaceDirectory.lockFileName]).map {
+                dataDir.appendingPathComponent($0).standardizedFileURL.path
+            })
+            guard !protected.contains(url.path) else {
+                throw CLIError("Refusing to overwrite a managed workspace file: \(url.path)")
+            }
             do {
                 try data.write(to: url, options: .atomic)
             } catch {
@@ -466,12 +496,17 @@ enum PostmeCLI {
 
     private static func report(_ error: Error, json: Bool) -> Int32 {
         let cliError = error as? CLIError ?? CLIError(error.localizedDescription)
-        if json, let data = try? JSONSerialization.data(withJSONObject: ["error": cliError.message], options: [.sortedKeys]),
-           let text = String(data: data, encoding: .utf8) {
-            FileHandle.standardError.write(Data((text + "\n").utf8))
-        } else {
-            FileHandle.standardError.write(Data("error: \(cliError.message)\n".utf8))
+        if json {
+            // 保留原有的 error 键（旧消费者不受影响），额外给机器消费者稳定的 code / exitCode。
+            var object: [String: Any] = ["error": cliError.message, "exitCode": cliError.exitCode]
+            if let code = cliError.code { object["code"] = code }
+            if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8) {
+                FileHandle.standardError.write(Data((text + "\n").utf8))
+                return cliError.exitCode
+            }
         }
+        FileHandle.standardError.write(Data("error: \(cliError.message)\n".utf8))
         return cliError.exitCode
     }
 
@@ -509,8 +544,11 @@ enum PostmeCLI {
 
         Notes:
           Import paths accept '-' for stdin. Request IDs are collection-node UUIDs,
-          shown by 'request list'. Close the GUI before CLI write operations: the
-          current JSON store has no cross-process merge or locking.
+          shown by 'request list'. GUI and CLI take a short exclusive lock only while
+          writing. A write command that finds the workspace busy or changed on disk
+          fails with exit code 3 and writes nothing -- just retry it. Read-only
+          commands are unaffected. The GUI detects external changes when reactivated
+          and reloads, or asks before discarding unsaved edits.
         """)
     }
 }

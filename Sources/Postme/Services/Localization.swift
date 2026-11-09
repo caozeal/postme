@@ -457,6 +457,21 @@ enum L10nKey: String, CaseIterable, Sendable {
     case responseLimitConfigured
     case responseTruncatedByLimit
     case responseTruncatedForDisplay
+
+    // MARK: - 保存失败 / 工作区冲突
+
+    case saveFailedTitle
+    case saveFailedMessage
+    case saveFailedRetry
+    case saveFailedLater
+    case saveFailedBadge
+    case workspaceChangedTitle
+    case workspaceChangedMessage
+    case workspaceChangedReload
+    case workspaceChangedKeep
+    case workspaceChangedRecheck
+    case quitSaveFailedTitle
+    case quitAnyway
 }
 
 /// 一套语言的取词器。
@@ -906,6 +921,19 @@ enum L10nTable {
         .responseLimitConfigured: "配置",
         .responseTruncatedByLimit: "…（响应体超过 %@ 上限，已停止接收；以上为前 %@）",
         .responseTruncatedForDisplay: "…（响应体 %@ 过大，已截断显示）",
+
+        .saveFailedTitle: "工作区保存失败",
+        .saveFailedMessage: "以下文件未能写入：%@。数据仍在内存中，修复后请重试。",
+        .saveFailedRetry: "重试",
+        .saveFailedLater: "稍后处理",
+        .saveFailedBadge: "保存有问题",
+        .workspaceChangedTitle: "工作区已在别处修改",
+        .workspaceChangedMessage: "磁盘上的工作区已被其他 postme 改动（%@）。你还有尚未保存的编辑，重载会放弃这些编辑。",
+        .workspaceChangedReload: "重载并放弃我的编辑",
+        .workspaceChangedKeep: "保留我的改动",
+        .workspaceChangedRecheck: "重新检查",
+        .quitSaveFailedTitle: "退出前保存失败",
+        .quitAnyway: "仍要退出",
     ]
 
     // MARK: - English
@@ -1327,5 +1355,18 @@ enum L10nTable {
         .responseLimitConfigured: "configured",
         .responseTruncatedByLimit: "… (response body exceeded the %@ limit; receiving stopped. Showing the first %@)",
         .responseTruncatedForDisplay: "… (response body is %@; truncated for display)",
+
+        .saveFailedTitle: "Workspace save failed",
+        .saveFailedMessage: "Could not write: %@. The data is still in memory — fix the problem and retry.",
+        .saveFailedRetry: "Retry",
+        .saveFailedLater: "Later",
+        .saveFailedBadge: "Save problem",
+        .workspaceChangedTitle: "Workspace changed elsewhere",
+        .workspaceChangedMessage: "Another postme process changed the workspace on disk (%@). You have unsaved edits; reloading will discard them.",
+        .workspaceChangedReload: "Reload and discard my edits",
+        .workspaceChangedKeep: "Keep my edits",
+        .workspaceChangedRecheck: "Recheck",
+        .quitSaveFailedTitle: "Save failed before quitting",
+        .quitAnyway: "Quit anyway",
     ]
 }

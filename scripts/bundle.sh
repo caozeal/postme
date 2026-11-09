@@ -11,10 +11,14 @@ CONFIG="${CONFIG:-release}"
 BUILD_DIR="$ROOT/build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 
-echo "==> swift build -c $CONFIG"
-swift build -c "$CONFIG"
+# 命令行工具链 27.0 的默认 SDK 缺少 SwiftUI 宏插件(@State 无法展开),
+# 回退到 macosx26.5 SDK;如环境恢复可用 SDK=macosx27.0 覆盖。
+SDK="${SDK:-macosx26.5}"
 
-BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
+echo "==> swift build -c $CONFIG (sdk: $SDK)"
+BIN_PATH="$(xcrun --sdk "$SDK" swift build -c "$CONFIG" --show-bin-path)"
+xcrun --sdk "$SDK" swift build -c "$CONFIG"
+
 EXECUTABLE="$BIN_PATH/$APP_NAME"
 if [[ ! -f "$EXECUTABLE" ]]; then
     echo "错误:未找到可执行文件 $EXECUTABLE" >&2
