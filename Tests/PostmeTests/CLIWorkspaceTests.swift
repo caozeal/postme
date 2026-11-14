@@ -96,4 +96,65 @@ final class CLIWorkspaceTests: XCTestCase {
             XCTAssertNil(reloaded.workspace.tabs[0].nodeID)
         }
     }
+
+    func testCreateAndUpdateRequestSurviveReloadAndKeepIDs() throws {
+        try MainActor.assumeIsolated {
+            let dir = makeTempDir()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let store = CLIWorkspace(directory: dir)
+            _ = try store.createProject(name: "Base")
+
+            let created = try store.createRequest(
+                name: "Get user",
+                request: APIRequest(name: "Get user", url: "https://example.com/users"),
+                project: nil
+            )
+            XCTAssertEqual(created.saved.name, "Get user")
+            XCTAssertEqual(created.project.id, store.workspace.activeProjectID, "未指定项目时落在活动项目")
+
+            var edited = created.saved.request
+            edited.method = .post
+            edited.url = "https://example.com/users/create"
+            edited.bodyText = "{\"ok\":true}"
+            let updated = try store.updateRequest(id: created.saved.id, name: "Create user", request: edited)
+
+            XCTAssertEqual(updated.saved.id, created.saved.id, "节点 UUID 不变，页签归属不失效")
+            XCTAssertEqual(updated.saved.request.id, created.saved.request.id, "请求 UUID 不变")
+            XCTAssertEqual(updated.saved.name, "Create user")
+            XCTAssertEqual(updated.saved.request.method, .post)
+            XCTAssertEqual(updated.saved.request.url, "https://example.com/users/create")
+
+            let reloaded = CLIWorkspace(directory: dir)
+            let rows = try reloaded.requests()
+            XCTAssertEqual(rows.count, 1)
+            XCTAssertEqual(rows[0].saved.name, "Create user")
+            XCTAssertEqual(rows[0].saved.request.bodyText, "{\"ok\":true}")
+        }
+    }
+
+    func testUpdateRequestWithoutNameKeepsNameAndTabBinding() throws {
+        try MainActor.assumeIsolated {
+            let dir = makeTempDir()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let saved = CollectionNode.SavedRequest(
+                name: "Original", request: APIRequest(name: "Original", url: "https://example.com")
+            )
+            let project = Project(name: "Only", children: [.request(saved)])
+            let tab = EditorTab(draft: saved.request, baseline: saved.request, nodeID: saved.id)
+            var workspace = Workspace(projects: [project], activeProjectID: project.id)
+            workspace.tabs = [tab]
+            workspace.activeTabID = tab.id
+            XCTAssertTrue(PersistenceService(directory: dir).saveNow(workspace))
+
+            let store = CLIWorkspace(directory: dir)
+            var edited = saved.request
+            edited.url = "https://example.com/v2"
+            _ = try store.updateRequest(id: saved.id, name: nil, request: edited)
+
+            let reloaded = CLIWorkspace(directory: dir)
+            XCTAssertEqual(try reloaded.requests().first?.saved.name, "Original", "没给名字就保留原名")
+            XCTAssertEqual(reloaded.workspace.tabs.first?.nodeID, saved.id)
+            XCTAssertEqual(try reloaded.requests().first?.saved.request.url, "https://example.com/v2")
+        }
+    }
 }

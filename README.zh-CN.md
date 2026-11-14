@@ -181,6 +181,9 @@ build/postme request show <请求 UUID>
 build/postme environment create Development
 build/postme environment set Development baseUrl https://localhost:8080
 build/postme export postman "Demo API" --output ./collection.json
+build/postme --json request show <请求 UUID> > ./spec.json
+build/postme request create ./spec.json --name "Ping v2" --project "Demo API"
+build/postme request update <请求 UUID> ./spec.json
 build/postme request delete <请求 UUID> --yes
 ```
 
@@ -194,6 +197,12 @@ build/postme request delete <请求 UUID> --yes
   同步落盘。退出码：`0` 成功、`1` 操作失败、`2` 参数错误、`3` 工作区并发冲突；`--json` 模式下错误
   还会带稳定的 `code`（`workspace_busy` / `workspace_conflict`）以及 `exitCode`。删除数据或清空历史
   必须显式传 `--yes`。`POSTME_DATA_DIR` 对 GUI 同样生效（GUI 的 Foundation 不跟随 `HOME` 覆盖）。
+- `request create <文件|->` 与 `request update <请求 UUID> <文件|->` 从文件或标准输入读一份完整的
+  `APIRequest` JSON；也接受 `request show --json` 的完整输出（取其 `request` 对象与顶层 `name`），
+  因此 `show` → 改 → `update` 可以直接闭环。名称优先级：`--name` > JSON 的 `name` > 请求自带名；
+  `update` 不给名称时保留原名。节点 UUID 与请求 UUID 都保持不变，已打开的页签归属不失效。
+  缺少 `url` / `method` / `headers` / `bodyKind` 的输入会以退出码 2 拒绝，不会静默写出一条空请求。
+  `create` 未指定 `--project` 时落在当前活动项目。
 - 项目、请求、环境和历史的完整子命令见 `build/postme --help`；环境还支持 `use`、`deactivate`、
   `unset` 和 `delete`。
 
@@ -206,6 +215,21 @@ build/postme request delete <请求 UUID> --yes
 > **为什么不直接 `swift run` 日常用**：以裸二进制启动时进程是 accessory 姿态，窗口不会置前、
 > 也没有应用菜单栏。代码里用 `NSApplicationDelegateAdaptor` 做了激活兜底，但正式使用还是
 > 走 `.app` 更正常。
+
+### Agent 技能
+
+`skills/postme/SKILL.md` 随仓库分发，是给 AI agent 看的技能说明：写清 CLI 子命令、选择器、
+`--json` 输出、退出码与并发写冲突规则，让 agent 不必猜参数就能操作工作区。
+它只覆盖 CLI 用法——发送 HTTP 请求或修改 Postme 源码不在范围内。
+
+把该目录链到 agent 的技能目录即可启用，例如：
+
+```bash
+ln -s "$PWD/skills/postme" ~/.codebuddy/skills/postme
+```
+
+若该路径下已有同名 `postme`，先移除或替换。技能里的命令名默认 `postme` 已在 `PATH` 上；
+直接用构建产物时换成 `build/postme`（或 `build/postme.app/Contents/MacOS/postme`）。
 
 ### 零依赖
 
@@ -397,6 +421,7 @@ Sources/Postme/
 └── Components/              可复用控件（代码文本视图、键值表、JSON 高亮）
 
 Tests/PostmeTests/           测试套件（含真实 socket 的响应上限/取消用例）
+skills/postme/SKILL.md       agent 技能：给 AI agent 看的 CLI 用法（不参与应用构建）
 ```
 
 `Models/` 与 `Services/` 刻意**不 import SwiftUI**。这让整个逻辑层可以脱离界面单独编译，
@@ -488,9 +513,13 @@ Tests/PostmeTests/           测试套件（含真实 socket 的响应上限/取
   抓窗口像素 + Vision OCR，确认请求栏上「复制为 cURL」**只渲染图标**、文字不再占用栏宽
   （说明文字在 tooltip 与无障碍标签里）；把 `Image` 改回 `Label` 会让该用例失败。
 - `swift build -c release` 零警告零错误
-- CLI：3 项 `CLIWorkspaceTests` 覆盖导入/环境持久化、带脏草稿的项目激活（含真实 `AppState` 启动）、
-  请求删除与最后一个项目保护；另在隔离目录完成三种格式导入、请求/项目/环境/历史操作、Postman
-  导出、删除确认和退出码的端到端验证。当前 `swift test` 在 macOS CI 上共执行 **431 项测试**（8 项跳过，0 失败）。
+- CLI：5 项 `CLIWorkspaceTests` 覆盖导入/环境持久化、带脏草稿的项目激活（含真实 `AppState` 启动）、
+  请求删除与最后一个项目保护，以及 create/update 落盘往返（UUID 保持、不传名称时保留原名）；
+  2 项 `CLIExitCodeTests` 用真实 JSON 文件经 `PostmeCLI.run` 跑通 create/update，并断言不完整输入
+  被拒绝且不写入。另在隔离目录完成三种格式导入、请求/项目/环境/历史操作、Postman 导出、删除确认
+  和退出码的端到端验证。改动前 `swift test` 在 macOS CI 上共执行 **431 项测试**（8 项跳过，0 失败）；
+  本次新增 4 项用例，本机缺 XCTest 跑不了全量，计数需 CI 复核。create/update 本身已在本机用编译出的
+  二进制在隔离数据目录实测：`show` → 改 → `update`、两种 JSON 形态、UUID 保持与负控（退出码 2、不写入）。
 - 本地化：`LocalizationTests` 断言两张字符串表覆盖全部键、
   两语言间的格式占位符一致（含 `%.1f`）、英文表不含任何 CJK 字符、语言变化可被观察
   （菜单栏重算依赖的机制）、选择能往返落盘、缓存中的响应展示文本会重算，

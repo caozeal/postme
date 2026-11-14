@@ -193,6 +193,36 @@ final class CLIWorkspace {
         throw CLIError("Request not found: \(id.uuidString)")
     }
 
+    /// 在项目根目录追加一条已保存请求。名称由调用方解析好（--name > JSON > 请求自带名）。
+    func createRequest(name: String, request: APIRequest, project selector: String?) throws -> CLIRequestRef {
+        if selector == nil { ensureActiveProject() }
+        let target = try project(selector)
+        guard let index = workspace.projects.firstIndex(where: { $0.id == target.id }) else {
+            throw CLIError("Project not found: \(target.id.uuidString)")
+        }
+        let saved = CollectionNode.SavedRequest(name: name, request: request)
+        workspace.projects[index].children.append(.request(saved))
+        try save()
+        return CLIRequestRef(project: workspace.projects[index], saved: saved, path: [])
+    }
+
+    /// 原地替换一条请求的内容，节点与请求的 UUID 都保持不变（页签归属、历史引用不失效）。
+    /// name 为 nil 时保留原名称。
+    func updateRequest(id: UUID, name: String?, request: APIRequest) throws -> CLIRequestRef {
+        let target = try self.request(id: id)
+        guard let index = workspace.projects.firstIndex(where: { $0.id == target.project.id }) else {
+            throw CLIError("Project not found: \(target.project.id.uuidString)")
+        }
+        guard workspace.projects[index].children.replaceSavedRequest(id: id, with: request) else {
+            throw CLIError("Request not found: \(id.uuidString)")
+        }
+        if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            workspace.projects[index].children.renameNode(id: id, to: name)
+        }
+        try save()
+        return try self.request(id: id)
+    }
+
     func deleteRequest(id: UUID) throws -> CLIRequestRef {
         let target = try request(id: id)
         guard let index = workspace.projects.firstIndex(where: { $0.id == target.project.id }) else {

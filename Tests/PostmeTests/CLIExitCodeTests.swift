@@ -95,6 +95,49 @@ final class CLIExitCodeTests: XCTestCase {
         XCTAssertEqual(PostmeCLI.run(arguments: ["--data-dir", dir.path, "bogus"]), 2)
     }
 
+    func testRequestCreateAndUpdateFromJSON() throws {
+        let dir = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(
+            PostmeCLI.run(arguments: ["--data-dir", dir.path, "project", "create", "Alpha"]), 0
+        )
+
+        let spec = dir.appendingPathComponent("request.json")
+        var request = APIRequest(name: "Ping", url: "https://example.com/ping")
+        try JSONEncoder().encode(request).write(to: spec)
+        XCTAssertEqual(PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "--json", "request", "create", spec.path, "--name", "Ping v1"
+        ]), 0)
+
+        let id = try XCTUnwrap(try CLIWorkspace(directory: dir).requests().first?.saved.id)
+        request.method = .post
+        request.url = "https://example.com/ping/v2"
+        try JSONEncoder().encode(request).write(to: spec)
+        XCTAssertEqual(PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "request", "update", id.uuidString, spec.path
+        ]), 0)
+
+        let saved = try XCTUnwrap(try CLIWorkspace(directory: dir).requests().first?.saved)
+        XCTAssertEqual(saved.name, "Ping v1")
+        XCTAssertEqual(saved.request.method, .post)
+        XCTAssertEqual(saved.request.url, "https://example.com/ping/v2")
+    }
+
+    /// 容错解码不能把 `request list` 的摘要行或空对象静默写成一条空请求。
+    func testRequestCreateRejectsIncompleteJSON() throws {
+        let dir = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(
+            PostmeCLI.run(arguments: ["--data-dir", dir.path, "project", "create", "Alpha"]), 0
+        )
+        let spec = dir.appendingPathComponent("summary.json")
+        try Data("{\"name\":\"Ping\",\"url\":\"https://example.com\"}".utf8).write(to: spec)
+        XCTAssertEqual(PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "request", "create", spec.path
+        ]), 2)
+        XCTAssertTrue(try CLIWorkspace(directory: dir).requests().isEmpty, "不合法输入不得写入")
+    }
+
     func testExportRefusesManagedOutputPath() {
         let dir = makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

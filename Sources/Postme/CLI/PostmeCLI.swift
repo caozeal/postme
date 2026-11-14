@@ -49,7 +49,7 @@ private struct CLIOptions {
     var positionals: [String] = []
 
     init(_ arguments: [String]) throws {
-        let valueOptions: Set<String> = ["data-dir", "project", "new-project", "output", "limit"]
+        let valueOptions: Set<String> = ["data-dir", "project", "new-project", "output", "limit", "name"]
         let flagOptions: Set<String> = ["json", "yes"]
         var index = 0
         var literalOnly = false
@@ -230,6 +230,28 @@ enum PostmeCLI {
                 var object = requestObject(ref)
                 object["request"] = try jsonObject(ref.saved.request)
                 return try jsonString(object)
+            }
+        case "create":
+            try expect(p, count: 2, usage: "request create <file|-> [--project <project>] [--name <name>]")
+            try options.allow(values: ["project", "name"])
+            let spec = try decodeRequestJSON(try readInput(path: p[1]))
+            let name = options.value("name") ?? spec.name ?? spec.request.name
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw CLIError.usage("Request name cannot be empty.")
+            }
+            let created = try store.createRequest(name: name, request: spec.request, project: options.value("project"))
+            try emit(requestObject(created, includeRequest: true), json: options.json) {
+                "Created request \(created.saved.name) (\(created.saved.id.uuidString))"
+            }
+        case "update":
+            try expect(p, count: 3, usage: "request update <request-uuid> <file|-> [--name <name>]")
+            try options.allow(values: ["name"])
+            let spec = try decodeRequestJSON(try readInput(path: p[2]))
+            let updated = try store.updateRequest(id: try uuid(p[1], kind: "request"),
+                                                  name: options.value("name") ?? spec.name,
+                                                  request: spec.request)
+            try emit(requestObject(updated, includeRequest: true), json: options.json) {
+                "Updated request \(updated.saved.name) (\(updated.saved.id.uuidString))"
             }
         case "delete":
             try expect(p, count: 2, usage: "request delete <request-uuid> --yes")
@@ -471,6 +493,31 @@ enum PostmeCLI {
         }
     }
 
+    /// create / update 的输入：一份完整的 `APIRequest` JSON，或 `request show --json`
+    /// 的完整输出（顶层 `request` + `name`），这样 show → 改 → update 可以直接闭环。
+    ///
+    /// `APIRequest` 的解码是容错的（缺字段一律退默认值），所以先做结构校验：
+    /// 否则把摘要行、空对象或无关文件喂进来也会「成功」创建一条空请求。
+    private static func decodeRequestJSON(_ data: Data) throws -> (name: String?, request: APIRequest) {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let dictionary = object as? [String: Any] else {
+            throw CLIError.usage("Request spec must be a JSON object.")
+        }
+        let body = (dictionary["request"] as? [String: Any]) ?? dictionary
+        guard body["url"] is String,
+              body["method"] is String,
+              body["headers"] as? [Any] != nil,
+              body["bodyKind"] is String else {
+            throw CLIError.usage("Request JSON must contain a full APIRequest (use 'request show <id> --json' and pass its .request object).")
+        }
+        let encoded = try JSONSerialization.data(withJSONObject: body)
+        do {
+            return (dictionary["name"] as? String, try JSONDecoder().decode(APIRequest.self, from: encoded))
+        } catch {
+            throw CLIError.usage("Invalid request JSON: \(error.localizedDescription)")
+        }
+    }
+
     private static func uuid(_ text: String, kind: String) throws -> UUID {
         guard let value = UUID(uuidString: text) else {
             throw CLIError.usage("Expected \(kind) UUID, got: \(text)")
@@ -520,7 +567,7 @@ enum PostmeCLI {
 
         Commands:
           project list|create|rename|use|delete
-          request list|show|delete
+          request list|show|create|update|delete
           environment list|create|use|deactivate|set|unset|delete
           history list|clear
           import openapi <file|-> [--project <project> | --new-project <name>]
@@ -535,6 +582,7 @@ enum PostmeCLI {
           --new-project <name>   Import into a new project
           --output <file|->      Export file; stdout when omitted or '-'
           --limit <count>        History rows (default: 50)
+          --name <name>          Request name for create/update (otherwise from JSON)
           --yes                  Confirm project/request/environment delete or history clear
           --version              Print version
           -h, --help             Show this help
@@ -544,8 +592,10 @@ enum PostmeCLI {
 
         Notes:
           Import paths accept '-' for stdin. Request IDs are collection-node UUIDs,
-          shown by 'request list'. GUI and CLI take a short exclusive lock only while
-          writing. A write command that finds the workspace busy or changed on disk
+          shown by 'request list'. 'request create <file|->' and
+          'request update <uuid> <file|->' take a full APIRequest JSON; the output
+          of 'request show --json' is accepted as-is (its 'request' object is used).
+          GUI and CLI take a short exclusive lock only while writing. A write command that finds the workspace busy or changed on disk
           fails with exit code 3 and writes nothing -- just retry it. Read-only
           commands are unaffected. The GUI detects external changes when reactivated
           and reloads, or asks before discarding unsaved edits.

@@ -217,6 +217,9 @@ build/postme request show <request-uuid>
 build/postme environment create Development
 build/postme environment set Development baseUrl https://localhost:8080
 build/postme export postman "Demo API" --output ./collection.json
+build/postme --json request show <request-uuid> > ./spec.json
+build/postme request create ./spec.json --name "Ping v2" --project "Demo API"
+build/postme request update <request-uuid> ./spec.json
 build/postme request delete <request-uuid> --yes
 ```
 
@@ -232,6 +235,14 @@ build/postme request delete <request-uuid> --yes
   `--json`, errors also carry a stable `code` (`workspace_busy` or `workspace_conflict`) alongside
   `error` and `exitCode`. Deleting data or clearing history requires `--yes`.
   `POSTME_DATA_DIR` also applies to the GUI, which otherwise ignores `HOME` overrides.
+- `request create <file|->` and `request update <uuid> <file|->` read a full `APIRequest` JSON from
+  a file or stdin. The output of `request show --json` is accepted as-is (it uses the nested
+  `request` object and the top-level `name`), so `show` → edit → `update` is a closed loop. The
+  name comes from `--name`, then the JSON's `name`, then the request's own name; `update` without a
+  name keeps the existing one. Both the node UUID and the request UUID are preserved, so open tabs
+  keep their binding. A spec missing `url` / `method` / `headers` / `bodyKind` is rejected with
+  exit code 2 rather than silently becoming an empty request. `create` lands in the active project
+  unless `--project` is given.
 - Run `build/postme <command>` for projects, requests, environments and history. Environment
   commands also support `use`, `deactivate`, `unset` and `delete`.
 
@@ -246,6 +257,23 @@ build/postme request delete <request-uuid> --yes
 > **Why not just `swift run`**: a bare binary launches as an accessory process — the window is not
 > brought forward and there is no application menu. `NSApplicationDelegateAdaptor` provides an
 > activation fallback, but the `.app` bundle is the normal way to run it.
+
+### Agent skill
+
+`skills/postme/SKILL.md` ships with the repository: a skill file for AI agents that spells out the
+CLI subcommands, selectors, `--json` output, exit codes and concurrency-conflict rules, so an agent
+can drive a workspace without guessing flag names. It covers the CLI only — sending HTTP requests
+or changing Postme's source code is out of scope.
+
+Expose the directory to your agent's skills path, for example:
+
+```bash
+ln -s "$PWD/skills/postme" ~/.codebuddy/skills/postme
+```
+
+Remove or replace an existing `postme` entry at that path first. The commands in the skill assume
+`postme` is on `PATH`; when running from a build, use `build/postme` (or
+`build/postme.app/Contents/MacOS/postme`) instead.
 
 ### Zero dependencies
 
@@ -472,6 +500,7 @@ Sources/Postme/
 └── Components/              reusable controls (code text view, key-value editor, JSON highlighter)
 
 Tests/PostmeTests/           test suite (including response-cap and cancellation cases over real sockets)
+skills/postme/SKILL.md       agent skill: CLI usage notes for AI agents (not part of the app build)
 ```
 
 `Models/` and `Services/` deliberately do **not** import SwiftUI. The logic layer compiles without
@@ -591,11 +620,17 @@ undo a fixed behavior. They are now part of `Tests/PostmeTests/` and run with `s
   (the text lives in the tooltip and accessibility label); switching the `Image` back to a `Label`
   makes that test fail.
 - `swift build -c release`: zero warnings, zero errors
-- CLI: three `CLIWorkspaceTests` cover import/environment persistence, project activation with dirty
-  tabs (including a real `AppState` launch), request deletion and last-project protection. An isolated
-  end-to-end run also exercised all three import formats, request/project/environment/history operations,
-  Postman export, destructive-command confirmation and exit codes. `swift test` currently runs
-  **431 tests** (8 skipped, 0 failures) on macOS CI.
+- CLI: five `CLIWorkspaceTests` cover import/environment persistence, project activation with dirty
+  tabs (including a real `AppState` launch), request deletion and last-project protection, plus
+  create/update round-trips (UUIDs preserved, omitted name kept); two `CLIExitCodeTests` additionally
+  drive create/update through `PostmeCLI.run` with real JSON files and assert that an incomplete spec
+  is rejected without writing. An isolated end-to-end run also exercised all three import formats,
+  request/project/environment/history operations, Postman export, destructive-command confirmation
+  and exit codes. `swift test` ran **431 tests** (8 skipped, 0 failures) on macOS CI before these
+  four new cases; this machine has no XCTest, so the new cases and the updated count need a CI run.
+  The create/update paths themselves were verified here against the built binary in an isolated data
+  directory: show → edit → update, both accepted JSON shapes, UUID preservation and the negative
+  control (exit code 2, no write).
 - Localization: `LocalizationTests` asserts that both string tables
   cover every key, that format placeholders match between languages (including `%.1f`), that the
   English table contains no CJK characters, that a language change is observable (the mechanism
