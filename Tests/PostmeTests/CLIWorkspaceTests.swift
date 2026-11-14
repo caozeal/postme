@@ -155,4 +155,62 @@ final class CLIWorkspaceTests: XCTestCase {
             XCTAssertEqual(try reloaded.requests().first?.saved.request.url, "https://example.com/v2")
         }
     }
+
+    func testFolderCommandsAndNestedRequestPlacementSurviveReload() throws {
+        try MainActor.assumeIsolated {
+            let dir = makeTempDir()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let store = CLIWorkspace(directory: dir)
+            _ = try store.createProject(name: "Base")
+
+            let api = try store.createFolder(name: "API", project: nil, in: nil)
+            let nested = try store.createFolder(name: "Users", project: nil, in: api.folder.id)
+            XCTAssertEqual(nested.path, ["API", "Users"])
+
+            let renamed = try store.renameFolder(id: nested.folder.id, to: "Accounts")
+            XCTAssertEqual(renamed.path, ["API", "Accounts"])
+
+            let request = try store.createRequest(
+                name: "Get user",
+                request: APIRequest(name: "Get user", url: "https://example.com/users"),
+                project: nil,
+                folder: .folder(nested.folder.id)
+            )
+            XCTAssertEqual(request.path, ["API", "Accounts"])
+            XCTAssertEqual(try store.folders().first { $0.folder.id == nested.folder.id }?.requestCount, 1)
+
+            let reloaded = CLIWorkspace(directory: dir)
+            XCTAssertEqual(try reloaded.folders().count, 2)
+            XCTAssertEqual(try reloaded.requests().first?.path, ["API", "Accounts"])
+
+            _ = try reloaded.deleteFolder(id: api.folder.id)
+            XCTAssertTrue(try reloaded.requests().isEmpty, "删父文件夹要连带删掉子树里的请求")
+            XCTAssertTrue(try reloaded.folders().isEmpty)
+        }
+    }
+
+    func testUpdateRequestMovesBetweenFoldersAndBackToRoot() throws {
+        try MainActor.assumeIsolated {
+            let dir = makeTempDir()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let store = CLIWorkspace(directory: dir)
+            _ = try store.createProject(name: "Base")
+            let a = try store.createFolder(name: "A", project: nil, in: nil)
+            let b = try store.createFolder(name: "B", project: nil, in: nil)
+            let created = try store.createRequest(
+                name: "Ping", request: APIRequest(name: "Ping"), project: nil, folder: .folder(a.folder.id)
+            )
+            XCTAssertEqual(created.path, ["A"])
+
+            let moved = try store.updateRequest(id: created.saved.id, name: nil,
+                                                request: created.saved.request, folder: .folder(b.folder.id))
+            XCTAssertEqual(moved.path, ["B"])
+            XCTAssertEqual(moved.saved.id, created.saved.id, "移动不改节点 UUID")
+
+            let rooted = try store.updateRequest(id: created.saved.id, name: nil,
+                                                 request: created.saved.request, folder: .root)
+            XCTAssertTrue(rooted.path.isEmpty)
+            XCTAssertEqual(try store.folders().first { $0.folder.id == b.folder.id }?.requestCount, 0)
+        }
+    }
 }

@@ -138,6 +138,59 @@ final class CLIExitCodeTests: XCTestCase {
         XCTAssertTrue(try CLIWorkspace(directory: dir).requests().isEmpty, "不合法输入不得写入")
     }
 
+    /// 端到端跑一遍文件夹命令，并验证 `--folder` / `--folder root` 改变请求归属。
+    func testFolderCommandsAndRequestFolderOption() throws {
+        let dir = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(
+            PostmeCLI.run(arguments: ["--data-dir", dir.path, "project", "create", "Alpha"]), 0
+        )
+        XCTAssertEqual(
+            PostmeCLI.run(arguments: ["--data-dir", dir.path, "folder", "create", "API"]), 0
+        )
+        let id = try XCTUnwrap(try CLIWorkspace(directory: dir).folders().first?.folder.id)
+        XCTAssertEqual(PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "folder", "rename", id.uuidString, "V2"
+        ]), 0)
+        XCTAssertEqual(PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "folder", "create", "Users", "--in", id.uuidString
+        ]), 0)
+
+        let spec = dir.appendingPathComponent("request.json")
+        try JSONEncoder().encode(APIRequest(name: "Ping", url: "https://example.com")).write(to: spec)
+        XCTAssertEqual(PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "request", "create", spec.path, "--folder", id.uuidString
+        ]), 0)
+        XCTAssertTrue(try CLIWorkspace(directory: dir).requests().first?.path == ["V2"])
+
+        let requestID = try XCTUnwrap(try CLIWorkspace(directory: dir).requests().first?.saved.id)
+        XCTAssertEqual(PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "request", "update", requestID.uuidString, spec.path, "--folder", "root"
+        ]), 0)
+        XCTAssertTrue(try CLIWorkspace(directory: dir).requests().first?.path.isEmpty == true)
+
+        XCTAssertEqual(PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "folder", "delete", id.uuidString, "--yes"
+        ]), 0)
+        let final = CLIWorkspace(directory: dir)
+        XCTAssertTrue(try final.folders().isEmpty)
+        XCTAssertEqual(try final.requests().count, 1, "移到根目录的请求不该被文件夹删除连带删掉")
+    }
+
+    /// `--in` 指向不存在的文件夹必须失败，不能像 GUI 那样兜底建到根目录。
+    func testFolderCreateRejectsUnknownParent() throws {
+        let dir = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(
+            PostmeCLI.run(arguments: ["--data-dir", dir.path, "project", "create", "Alpha"]), 0
+        )
+        let code = PostmeCLI.run(arguments: [
+            "--data-dir", dir.path, "folder", "create", "Orphan", "--in", UUID().uuidString
+        ])
+        XCTAssertNotEqual(code, 0)
+        XCTAssertTrue(try CLIWorkspace(directory: dir).folders().isEmpty, "不能兜底建到根目录")
+    }
+
     func testExportRefusesManagedOutputPath() {
         let dir = makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -7,6 +7,21 @@ struct CLIRequestRef {
     var path: [String]
 }
 
+/// CLI 看到的一个文件夹（含完整层级路径）。
+struct CLIFolderRef {
+    var project: Project
+    var folder: CollectionNode.Folder
+    var path: [String]
+    var requestCount: Int
+}
+
+/// 归属目标。`unchanged` 只用于 update：不传 `--folder` 时保持原位置。
+enum FolderTarget {
+    case unchanged
+    case root
+    case folder(UUID)
+}
+
 /// 三种导入共用的结果摘要。
 struct CLIImportSummary {
     var project: Project
@@ -163,6 +178,83 @@ final class CLIWorkspace {
         return target
     }
 
+    // MARK: - 文件夹
+
+    func folders(project selector: String? = nil) throws -> [CLIFolderRef] {
+        let selected: [Project]
+        if let selector {
+            selected = [try project(selector)]
+        } else {
+            selected = workspace.projects
+        }
+        return selected.flatMap { Self.folders(in: $0.children, project: $0, path: []) }
+    }
+
+    private static func folders(in nodes: [CollectionNode], project: Project, path: [String]) -> [CLIFolderRef] {
+        nodes.flatMap { node -> [CLIFolderRef] in
+            guard case .folder(let folder) = node else { return [] }
+            let here = path + [folder.name]
+            let count = requests(in: folder.children, project: project, path: here).count
+            return [CLIFolderRef(project: project, folder: folder, path: here, requestCount: count)]
+                + folders(in: folder.children, project: project, path: here)
+        }
+    }
+
+    func folder(id: UUID) throws -> CLIFolderRef {
+        if let match = try folders().first(where: { $0.folder.id == id }) { return match }
+        throw CLIError("Folder not found: \(id.uuidString)")
+    }
+
+    func createFolder(name: String, project selector: String?, in parentID: UUID?) throws -> CLIFolderRef {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw CLIError("Folder name cannot be empty.") }
+        if selector == nil { ensureActiveProject() }
+        let target = try project(selector)
+        guard let index = workspace.projects.firstIndex(where: { $0.id == target.id }) else {
+            throw CLIError("Project not found: \(target.id.uuidString)")
+        }
+        if let parentID {
+            guard workspace.projects[index].children.findNode(id: parentID)?.isFolder == true else {
+                throw CLIError("Parent folder not found: \(parentID.uuidString)")
+            }
+        }
+        let node = CollectionNode.folder(.init(name: trimmed))
+        // 与 GUI 不同：这里不能兜底 append，否则 `--in` 拼错会把文件夹静默建到根目录。
+        guard workspace.projects[index].children.insert(node, intoFolder: parentID) else {
+            throw CLIError("Parent folder not found: \(parentID?.uuidString ?? "")")
+        }
+        try save()
+        return try self.folder(id: node.id)
+    }
+
+    func renameFolder(id: UUID, to name: String) throws -> CLIFolderRef {
+        let target = try self.folder(id: id)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw CLIError("Folder name cannot be empty.") }
+        guard let index = workspace.projects.firstIndex(where: { $0.id == target.project.id }) else {
+            throw CLIError("Project not found: \(target.project.id.uuidString)")
+        }
+        guard workspace.projects[index].children.renameNode(id: id, to: trimmed) else {
+            throw CLIError("Folder not found: \(id.uuidString)")
+        }
+        try save()
+        return try self.folder(id: id)
+    }
+
+    func deleteFolder(id: UUID) throws -> CLIFolderRef {
+        let target = try self.folder(id: id)
+        guard let index = workspace.projects.firstIndex(where: { $0.id == target.project.id }) else {
+            throw CLIError("Project not found: \(target.project.id.uuidString)")
+        }
+        let subtree = CollectionNode.folder(target.folder)
+        guard workspace.projects[index].children.removeNode(id: id) else {
+            throw CLIError("Folder not found: \(id.uuidString)")
+        }
+        detachDeletedNodes([subtree])
+        try save()
+        return target
+    }
+
     // MARK: - 请求
 
     func requests(project selector: String? = nil) throws -> [CLIRequestRef] {
@@ -193,8 +285,10 @@ final class CLIWorkspace {
         throw CLIError("Request not found: \(id.uuidString)")
     }
 
-    /// 在项目根目录追加一条已保存请求。名称由调用方解析好（--name > JSON > 请求自带名）。
-    func createRequest(name: String, request: APIRequest, project selector: String?) throws -> CLIRequestRef {
+    /// 新建请求。`folder` 为 .root 时落在项目根，为 .folder 时插入该文件夹。
+    /// 名称由调用方解析好（--name > JSON > 请求自带名）。
+    func createRequest(name: String, request: APIRequest, project selector: String?,
+                       folder: FolderTarget = .root) throws -> CLIRequestRef {
         if selector == nil { ensureActiveProject() }
         let target = try project(selector)
         guard let index = workspace.projects.firstIndex(where: { $0.id == target.id }) else {
@@ -204,26 +298,52 @@ final class CLIWorkspace {
         // 输入常来自 `request show --json`，沿用里面的 id 会让两条请求共享 requestID。
         stored.id = UUID()
         let saved = CollectionNode.SavedRequest(name: name, request: stored)
-        workspace.projects[index].children.append(.request(saved))
+        let folderID = try resolvedFolderID(folder, projectIndex: index)
+        guard workspace.projects[index].children.insert(.request(saved), intoFolder: folderID) else {
+            throw CLIError("Folder not found: \(folderID?.uuidString ?? "")")
+        }
         try save()
-        return CLIRequestRef(project: workspace.projects[index], saved: saved, path: [])
+        return try self.request(id: saved.id)
     }
 
     /// 原地替换一条请求的内容，节点与请求的 UUID 都保持不变（页签归属、历史引用不失效）。
-    /// name 为 nil 时保留原名称。
-    func updateRequest(id: UUID, name: String?, request: APIRequest) throws -> CLIRequestRef {
+    /// name 为 nil 时保留原名称；folder 为 .unchanged 时保留原位置。
+    func updateRequest(id: UUID, name: String?, request: APIRequest,
+                       folder: FolderTarget = .unchanged) throws -> CLIRequestRef {
         let target = try self.request(id: id)
         guard let index = workspace.projects.firstIndex(where: { $0.id == target.project.id }) else {
             throw CLIError("Project not found: \(target.project.id.uuidString)")
         }
+        // 先校验目标文件夹：改完内容才发现目标不存在会留下半截内存状态。
+        let folderID = try resolvedFolderID(folder, projectIndex: index)
         guard workspace.projects[index].children.replaceSavedRequest(id: id, with: request) else {
             throw CLIError("Request not found: \(id.uuidString)")
         }
         if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             workspace.projects[index].children.renameNode(id: id, to: name)
         }
+        switch folder {
+        case .unchanged: break
+        case .root:
+            guard workspace.projects[index].children.moveNode(id: id, to: .root) else {
+                throw CLIError("Failed to move request to the project root.")
+            }
+        case .folder:
+            guard let folderID,
+                  workspace.projects[index].children.moveNode(id: id, to: .inside(folderID)) else {
+                throw CLIError("Failed to move request into folder \(folderID?.uuidString ?? "").")
+            }
+        }
         try save()
         return try self.request(id: id)
+    }
+
+    private func resolvedFolderID(_ target: FolderTarget, projectIndex: Int) throws -> UUID? {
+        guard case .folder(let id) = target else { return nil }
+        guard workspace.projects[projectIndex].children.findNode(id: id)?.isFolder == true else {
+            throw CLIError("Folder not found: \(id.uuidString)")
+        }
+        return id
     }
 
     func deleteRequest(id: UUID) throws -> CLIRequestRef {

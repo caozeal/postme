@@ -181,10 +181,14 @@ build/postme request show <请求 UUID>
 build/postme environment create Development
 build/postme environment set Development baseUrl https://localhost:8080
 build/postme export postman "Demo API" --output ./collection.json
+build/postme folder create "Users" --project "Demo API"
+build/postme --json folder list --project "Demo API"
+build/postme folder rename <文件夹 UUID> "Accounts"
 build/postme --json request show <请求 UUID> > ./spec.json
-build/postme request create ./spec.json --name "Ping v2" --project "Demo API"
-build/postme request update <请求 UUID> ./spec.json
+build/postme request create ./spec.json --name "Ping v2" --project "Demo API" --folder <文件夹 UUID>
+build/postme request update <请求 UUID> ./spec.json --folder root
 build/postme request delete <请求 UUID> --yes
+build/postme folder delete <文件夹 UUID> --yes
 ```
 
 - OpenAPI 默认创建新项目，`--project` 则以文件夹形式并入已有项目；cURL 默认导入当前项目根目录；
@@ -203,8 +207,14 @@ build/postme request delete <请求 UUID> --yes
   `update` 不给名称时保留原名。节点 UUID 与请求 UUID 都保持不变，已打开的页签归属不失效。
   缺少 `url` / `method` / `headers` / `bodyKind` 的输入会以退出码 2 拒绝，不会静默写出一条空请求。
   `create` 未指定 `--project` 时落在当前活动项目。
-- 项目、请求、环境和历史的完整子命令见 `build/postme --help`；环境还支持 `use`、`deactivate`、
-  `unset` 和 `delete`。
+- `folder list|create|rename|delete` 管理集合树：`folder list --json` 给出每个文件夹的 UUID、
+  层级 `path` 与 `requestCount`；`folder create --in <文件夹 UUID>` 建子文件夹。
+  `request create --folder <文件夹 UUID>` 把新请求放进该文件夹，`request update --folder` 把已有
+  请求移过去，`--folder root`（或 `-`）移回项目根；不带 `--folder` 时 create 落项目根、update 保持
+  原位置。目标文件夹不存在会直接报错，不会像 GUI 那样兜底建到根目录。
+  `folder delete` 连同整个子树一起删，必须 `--yes`。
+- 项目、文件夹、请求、环境和历史的完整子命令见 `build/postme --help`；环境还支持 `use`、
+  `deactivate`、`unset` 和 `delete`。
 
 > **并发写入会被拒绝，绝不静默合并。** GUI 与 CLI 只在写操作期间短暂持有排他锁，并在每次写入前
 > 比对磁盘指纹（乐观 CAS）。写命令若发现目录正被占用或磁盘已被改动，会以退出码 3 失败且

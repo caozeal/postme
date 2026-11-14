@@ -217,10 +217,14 @@ build/postme request show <request-uuid>
 build/postme environment create Development
 build/postme environment set Development baseUrl https://localhost:8080
 build/postme export postman "Demo API" --output ./collection.json
+build/postme folder create "Users" --project "Demo API"
+build/postme --json folder list --project "Demo API"
+build/postme folder rename <folder-uuid> "Accounts"
 build/postme --json request show <request-uuid> > ./spec.json
-build/postme request create ./spec.json --name "Ping v2" --project "Demo API"
-build/postme request update <request-uuid> ./spec.json
+build/postme request create ./spec.json --name "Ping v2" --project "Demo API" --folder <folder-uuid>
+build/postme request update <request-uuid> ./spec.json --folder root
 build/postme request delete <request-uuid> --yes
+build/postme folder delete <folder-uuid> --yes
 ```
 
 - OpenAPI defaults to a new project; `--project` merges it as a folder. cURL defaults to the active
@@ -243,7 +247,14 @@ build/postme request delete <request-uuid> --yes
   keep their binding. A spec missing `url` / `method` / `headers` / `bodyKind` is rejected with
   exit code 2 rather than silently becoming an empty request. `create` lands in the active project
   unless `--project` is given.
-- Run `build/postme <command>` for projects, requests, environments and history. Environment
+- `folder list|create|rename|delete` manage the collection tree. `folder list --json` returns each
+  folder's UUID, hierarchical `path` and `requestCount`; `folder create --in <folder-uuid>` nests a
+  folder. `--folder <folder-uuid>` places a new request into that folder on `create` and moves an
+  existing one on `update`; `--folder root` (or `-`) moves it back to the project root. Omitting
+  `--folder` leaves `create` at the project root and keeps `update` in place. An unknown folder UUID
+  is an error, never a silent fallback to the root. `folder delete` removes the whole subtree and
+  needs `--yes`.
+- Run `build/postme <command>` for projects, folders, requests, environments and history. Environment
   commands also support `use`, `deactivate`, `unset` and `delete`.
 
 > **Concurrent writes are rejected, never silently merged.** GUI and CLI take a short exclusive

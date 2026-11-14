@@ -49,7 +49,7 @@ private struct CLIOptions {
     var positionals: [String] = []
 
     init(_ arguments: [String]) throws {
-        let valueOptions: Set<String> = ["data-dir", "project", "new-project", "output", "limit", "name"]
+        let valueOptions: Set<String> = ["data-dir", "project", "new-project", "output", "limit", "name", "folder", "in"]
         let flagOptions: Set<String> = ["json", "yes"]
         var index = 0
         var literalOnly = false
@@ -156,6 +156,7 @@ enum PostmeCLI {
         switch p[0] {
         case "project": try projectCommand(Array(p.dropFirst()), options, store)
         case "request": try requestCommand(Array(p.dropFirst()), options, store)
+        case "folder": try folderCommand(Array(p.dropFirst()), options, store)
         case "environment", "env": try environmentCommand(Array(p.dropFirst()), options, store)
         case "history": try historyCommand(Array(p.dropFirst()), options, store)
         case "import": try importCommand(Array(p.dropFirst()), options, store)
@@ -232,24 +233,27 @@ enum PostmeCLI {
                 return try jsonString(object)
             }
         case "create":
-            try expect(p, count: 2, usage: "request create <file|-> [--project <project>] [--name <name>]")
-            try options.allow(values: ["project", "name"])
+            try expect(p, count: 2, usage: "request create <file|-> [--project <project>] [--name <name>] [--folder <folder-uuid>]")
+            try options.allow(values: ["project", "name", "folder"])
             let spec = try decodeRequestJSON(try readInput(path: p[1]))
             let name = options.value("name") ?? spec.name ?? spec.request.name
             guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw CLIError.usage("Request name cannot be empty.")
             }
-            let created = try store.createRequest(name: name, request: spec.request, project: options.value("project"))
+            let created = try store.createRequest(name: name, request: spec.request,
+                                                  project: options.value("project"),
+                                                  folder: try folderTarget(options, fallback: .root))
             try emit(requestObject(created, includeRequest: true), json: options.json) {
                 "Created request \(created.saved.name) (\(created.saved.id.uuidString))"
             }
         case "update":
-            try expect(p, count: 3, usage: "request update <request-uuid> <file|-> [--name <name>]")
-            try options.allow(values: ["name"])
+            try expect(p, count: 3, usage: "request update <request-uuid> <file|-> [--name <name>] [--folder <folder-uuid>|root]")
+            try options.allow(values: ["name", "folder"])
             let spec = try decodeRequestJSON(try readInput(path: p[2]))
             let updated = try store.updateRequest(id: try uuid(p[1], kind: "request"),
                                                   name: options.value("name") ?? spec.name,
-                                                  request: spec.request)
+                                                  request: spec.request,
+                                                  folder: try folderTarget(options, fallback: .unchanged))
             try emit(requestObject(updated, includeRequest: true), json: options.json) {
                 "Updated request \(updated.saved.name) (\(updated.saved.id.uuidString))"
             }
@@ -262,6 +266,45 @@ enum PostmeCLI {
                 "Deleted request \(deleted.saved.name) (\(deleted.saved.id.uuidString))"
             }
         default: throw CLIError.usage("Unknown request action: \(action)")
+        }
+    }
+
+    private static func folderCommand(_ p: [String], _ options: CLIOptions, _ store: CLIWorkspace) throws {
+        guard let action = p.first else { throw CLIError.usage("Missing folder action.") }
+        switch action {
+        case "list":
+            try expect(p, count: 1, usage: "folder list [--project <project>]")
+            try options.allow(values: ["project"])
+            let rows = try store.folders(project: options.value("project")).map(folderObject)
+            try emit(rows, json: options.json) {
+                rows.map { row in
+                    "\(row["id"]!)\t\(row["path"]!)\t\(row["requestCount"]!) requests"
+                }.joined(separator: "\n")
+            }
+        case "create":
+            try expect(p, count: 2, usage: "folder create <name> [--project <project>] [--in <folder-uuid>]")
+            try options.allow(values: ["project", "in"])
+            let parentID = try optionalUUID(options.value("in"), kind: "folder")
+            let created = try store.createFolder(name: p[1], project: options.value("project"), in: parentID)
+            try emit(folderObject(created), json: options.json) {
+                "Created folder \(created.folder.name) (\(created.folder.id.uuidString))"
+            }
+        case "rename":
+            try expect(p, count: 3, usage: "folder rename <folder-uuid> <new-name>")
+            try options.allow()
+            let renamed = try store.renameFolder(id: try uuid(p[1], kind: "folder"), to: p[2])
+            try emit(folderObject(renamed), json: options.json) {
+                "Renamed folder to \(renamed.folder.name) (\(renamed.folder.id.uuidString))"
+            }
+        case "delete":
+            try expect(p, count: 2, usage: "folder delete <folder-uuid> --yes")
+            try options.allow(flags: ["yes"])
+            try options.requireConfirmation()
+            let deleted = try store.deleteFolder(id: try uuid(p[1], kind: "folder"))
+            try emit(["deletedFolderID": deleted.folder.id.uuidString], json: options.json) {
+                "Deleted folder \(deleted.folder.name) (\(deleted.folder.id.uuidString)) and its contents"
+            }
+        default: throw CLIError.usage("Unknown folder action: \(action)")
         }
     }
 
@@ -449,6 +492,18 @@ enum PostmeCLI {
         return object
     }
 
+    private static func folderObject(_ ref: CLIFolderRef) -> [String: Any] {
+        [
+            "id": ref.folder.id.uuidString,
+            "name": ref.folder.name,
+            "path": ref.path.joined(separator: " / "),
+            "pathComponents": ref.path,
+            "projectID": ref.project.id.uuidString,
+            "projectName": ref.project.name,
+            "requestCount": ref.requestCount
+        ]
+    }
+
     private static func importObject(_ summary: CLIImportSummary, format: String) -> [String: Any] {
         var object: [String: Any] = [
             "format": format,
@@ -529,6 +584,18 @@ enum PostmeCLI {
         return value
     }
 
+    private static func optionalUUID(_ text: String?, kind: String) throws -> UUID? {
+        guard let text else { return nil }
+        return try uuid(text, kind: kind)
+    }
+
+    /// `--folder <uuid>` 指定文件夹；`root` / `-` 表示项目根；不传时用 fallback。
+    private static func folderTarget(_ options: CLIOptions, fallback: FolderTarget) throws -> FolderTarget {
+        guard let raw = options.value("folder") else { return fallback }
+        if raw == "root" || raw == "-" { return .root }
+        return .folder(try uuid(raw, kind: "folder"))
+    }
+
     private static func positiveLimit(_ text: String?, defaultValue: Int) throws -> Int {
         guard let text else { return defaultValue }
         guard let value = Int(text), value > 0 else { throw CLIError.usage("--limit must be a positive integer.") }
@@ -572,6 +639,7 @@ enum PostmeCLI {
         Commands:
           project list|create|rename|use|delete
           request list|show|create|update|delete
+          folder list|create|rename|delete
           environment list|create|use|deactivate|set|unset|delete
           history list|clear
           import openapi <file|-> [--project <project> | --new-project <name>]
@@ -587,7 +655,9 @@ enum PostmeCLI {
           --output <file|->      Export file; stdout when omitted or '-'
           --limit <count>        History rows (default: 50)
           --name <name>          Request name for create/update (otherwise from JSON)
-          --yes                  Confirm project/request/environment delete or history clear
+          --folder <uuid>|root   Place/move a request into a folder (root = project root)
+          --in <folder-uuid>     Parent folder for 'folder create'
+          --yes                  Confirm project/request/folder/environment delete or history clear
           --version              Print version
           -h, --help             Show this help
 
@@ -599,6 +669,8 @@ enum PostmeCLI {
           shown by 'request list'. 'request create <file|->' and
           'request update <uuid> <file|->' take a full APIRequest JSON; the output
           of 'request show --json' is accepted as-is (its 'request' object is used).
+          'folder list|create|rename|delete' manage the collection tree; a folder
+          delete removes its whole subtree and needs --yes.
           GUI and CLI take a short exclusive lock only while writing. A write command that finds the workspace busy or changed on disk
           fails with exit code 3 and writes nothing -- just retry it. Read-only
           commands are unaffected. The GUI detects external changes when reactivated
