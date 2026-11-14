@@ -200,7 +200,10 @@ final class CLIWorkspace {
         guard let index = workspace.projects.firstIndex(where: { $0.id == target.id }) else {
             throw CLIError("Project not found: \(target.id.uuidString)")
         }
-        let saved = CollectionNode.SavedRequest(name: name, request: request)
+        var stored = request
+        // 输入常来自 `request show --json`，沿用里面的 id 会让两条请求共享 requestID。
+        stored.id = UUID()
+        let saved = CollectionNode.SavedRequest(name: name, request: stored)
         workspace.projects[index].children.append(.request(saved))
         try save()
         return CLIRequestRef(project: workspace.projects[index], saved: saved, path: [])

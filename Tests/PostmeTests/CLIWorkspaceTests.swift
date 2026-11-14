@@ -104,12 +104,10 @@ final class CLIWorkspaceTests: XCTestCase {
             let store = CLIWorkspace(directory: dir)
             _ = try store.createProject(name: "Base")
 
-            let created = try store.createRequest(
-                name: "Get user",
-                request: APIRequest(name: "Get user", url: "https://example.com/users"),
-                project: nil
-            )
+            let source = APIRequest(name: "Get user", url: "https://example.com/users")
+            let created = try store.createRequest(name: "Get user", request: source, project: nil)
             XCTAssertEqual(created.saved.name, "Get user")
+            XCTAssertNotEqual(created.saved.request.id, source.id, "复制式创建必须换新的请求 UUID")
             XCTAssertEqual(created.project.id, store.workspace.activeProjectID, "未指定项目时落在活动项目")
 
             var edited = created.saved.request

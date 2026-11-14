@@ -503,7 +503,8 @@ enum PostmeCLI {
               let dictionary = object as? [String: Any] else {
             throw CLIError.usage("Request spec must be a JSON object.")
         }
-        let body = (dictionary["request"] as? [String: Any]) ?? dictionary
+        let wrapped = dictionary["request"] as? [String: Any]
+        let body = wrapped ?? dictionary
         guard body["url"] is String,
               body["method"] is String,
               body["headers"] as? [Any] != nil,
@@ -511,8 +512,11 @@ enum PostmeCLI {
             throw CLIError.usage("Request JSON must contain a full APIRequest (use 'request show <id> --json' and pass its .request object).")
         }
         let encoded = try JSONSerialization.data(withJSONObject: body)
+        // 只有包装形态（`request show --json` 的完整输出）的顶层 name 是节点名；
+        // 纯 APIRequest 自己也有 name 字段，那是请求名，不该拿来覆盖节点名。
+        let nodeName = wrapped == nil ? nil : dictionary["name"] as? String
         do {
-            return (dictionary["name"] as? String, try JSONDecoder().decode(APIRequest.self, from: encoded))
+            return (nodeName, try JSONDecoder().decode(APIRequest.self, from: encoded))
         } catch {
             throw CLIError.usage("Invalid request JSON: \(error.localizedDescription)")
         }
