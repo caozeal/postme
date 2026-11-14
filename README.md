@@ -626,11 +626,11 @@ undo a fixed behavior. They are now part of `Tests/PostmeTests/` and run with `s
   drive create/update through `PostmeCLI.run` with real JSON files and assert that an incomplete spec
   is rejected without writing. An isolated end-to-end run also exercised all three import formats,
   request/project/environment/history operations, Postman export, destructive-command confirmation
-  and exit codes. `swift test` ran **431 tests** (8 skipped, 0 failures) on macOS CI before these
-  four new cases; this machine has no XCTest, so the new cases and the updated count need a CI run.
-  The create/update paths themselves were verified here against the built binary in an isolated data
-  directory: show → edit → update, both accepted JSON shapes, UUID preservation and the negative
-  control (exit code 2, no write).
+  and exit codes. A full `swift test` on a macOS host with Xcode runs **437 tests** (7 skipped,
+  0 failures), including the four new cases; a Command Line Tools-only install has no XCTest and
+  cannot run the suite. The create/update paths were also verified against the built binary in an
+  isolated data directory: show → edit → update, both accepted JSON shapes, UUID preservation and
+  the negative control (exit code 2, no write).
 - Localization: `LocalizationTests` asserts that both string tables
   cover every key, that format placeholders match between languages (including `%.1f`), that the
   English table contains no CJK characters, that a language change is observable (the mechanism

@@ -517,9 +517,10 @@ skills/postme/SKILL.md       agent 技能：给 AI agent 看的 CLI 用法（不
   请求删除与最后一个项目保护，以及 create/update 落盘往返（UUID 保持、不传名称时保留原名）；
   2 项 `CLIExitCodeTests` 用真实 JSON 文件经 `PostmeCLI.run` 跑通 create/update，并断言不完整输入
   被拒绝且不写入。另在隔离目录完成三种格式导入、请求/项目/环境/历史操作、Postman 导出、删除确认
-  和退出码的端到端验证。改动前 `swift test` 在 macOS CI 上共执行 **431 项测试**（8 项跳过，0 失败）；
-  本次新增 4 项用例，本机缺 XCTest 跑不了全量，计数需 CI 复核。create/update 本身已在本机用编译出的
-  二进制在隔离数据目录实测：`show` → 改 → `update`、两种 JSON 形态、UUID 保持与负控（退出码 2、不写入）。
+  和退出码的端到端验证。全量 `swift test` 在装有 Xcode 的 macOS 环境共执行 **437 项测试**
+  （7 项跳过、0 失败），含本次新增的 4 项；只装 Command Line Tools 的环境缺 XCTest，跑不了全量。
+  create/update 本身还用编译出的二进制在隔离数据目录实测：`show` → 改 → `update`、两种 JSON 形态、
+  UUID 保持与负控（退出码 2、不写入）。
 - 本地化：`LocalizationTests` 断言两张字符串表覆盖全部键、
   两语言间的格式占位符一致（含 `%.1f`）、英文表不含任何 CJK 字符、语言变化可被观察
   （菜单栏重算依赖的机制）、选择能往返落盘、缓存中的响应展示文本会重算，
