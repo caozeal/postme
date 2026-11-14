@@ -80,9 +80,11 @@ The cost is macOS-only; the payoff is an order-of-magnitude difference in memory
   into its own tab. Every open request gets its own tab with its own draft, unsaved marker,
   request/response pane selection and response — opening another request never replaces what you
   are typing, so the old "save / discard / cancel" prompt is gone. Closing a tab with unsaved
-  changes asks first (save and close / discard / cancel). The tab context menu offers Close,
-  Close Other Tabs and Close All Tabs; when a batch contains dirty tabs it asks once (discard and
-  close / cancel) instead of prompting per tab. Sending and cancelling are **per tab**:
+  changes asks first (save and close / discard / cancel). The tab context menu offers Duplicate Tab,
+  Close, Close Other Tabs and Close All Tabs; Duplicate copies the current draft (unsaved edits
+  included) into a new tab next to it, owned by no saved request, so saving it creates a new
+  request instead of overwriting the original. When a batch contains dirty tabs it asks once
+  (discard and close / cancel) instead of prompting per tab. Sending and cancelling are **per tab**:
   a slow request in one tab keeps running while you send in another, and "cancel" only interrupts
   the tab you are looking at. Tabs (each with its draft and, if it has one, the saved request it
   belongs to) are debounced to disk, so a crash does not lose them

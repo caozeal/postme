@@ -119,6 +119,40 @@ final class TabEditingTests: XCTestCase {
         XCTAssertEqual(app.tabs[1].draft.url, "https://unsaved", "未保存的草稿原地留着，不弹窗也不丢")
     }
 
+    // MARK: - 克隆
+
+    func testCloneTabCopiesDraftIntoAdjacentUnboundTab() {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sourceID = saveRequest(app, name: "one", url: "https://one")
+        let sourceTabID = app.activeTabID
+        app.draft.url = "https://edited"
+
+        let cloneID = app.cloneTab(id: sourceTabID)
+
+        XCTAssertEqual(app.tabs.count, 2)
+        XCTAssertEqual(app.tabs[1].id, cloneID, "副本紧挨在原件右侧")
+        XCTAssertEqual(app.activeTabID, cloneID, "克隆后停在副本上")
+        XCTAssertEqual(app.draft.url, "https://edited", "连未保存的改动一起复制")
+        XCTAssertNil(app.editingNodeID, "副本不归属已保存请求，保存时才新建")
+        XCTAssertFalse(app.isDraftDirty, "刚克隆出来的页签不算未保存修改")
+        XCTAssertEqual(app.tabs[0].nodeID, sourceID, "原件归属不变")
+    }
+
+    func testSavingCloneCreatesNewRequestAndLeavesSourceIntact() {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sourceID = saveRequest(app, name: "one", url: "https://one")
+        app.draft.url = "https://edited"
+
+        app.cloneTab(id: app.activeTabID)
+        app.saveAsNewRequest(name: "copy", intoFolder: nil)
+
+        XCTAssertEqual(node(app, id: sourceID).savedRequest?.request.url, "https://one", "克隆保存不许覆盖原件")
+        XCTAssertNotNil(app.editingNodeID)
+        XCTAssertNotEqual(app.editingNodeID, sourceID)
+    }
+
     // MARK: - 关闭
 
     func testClosingCleanTabIsImmediate() {

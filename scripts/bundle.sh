@@ -16,8 +16,11 @@ APP_DIR="$BUILD_DIR/$APP_NAME.app"
 SDK="${SDK:-macosx26.5}"
 
 echo "==> swift build -c $CONFIG (sdk: $SDK)"
-BIN_PATH="$(xcrun --sdk "$SDK" swift build -c "$CONFIG" --show-bin-path)"
-xcrun --sdk "$SDK" swift build -c "$CONFIG"
+# 本机 CLT 27.0 的 SwiftPM 编译 manifest 时会调用 sandbox-exec，在受限执行环境里
+# 被系统拒绝（sandbox_apply: Operation not permitted）。禁用 manifest 沙箱即可，
+# 不改动用户代码或 SDK 回退逻辑。
+BIN_PATH="$(xcrun --sdk "$SDK" swift build -c "$CONFIG" --disable-sandbox --show-bin-path)"
+xcrun --sdk "$SDK" swift build -c "$CONFIG" --disable-sandbox
 
 EXECUTABLE="$BIN_PATH/$APP_NAME"
 if [[ ! -f "$EXECUTABLE" ]]; then

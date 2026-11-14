@@ -66,6 +66,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case tabCloseDiscard
     case tabCloseMessage
     case tabCloseHelp
+    case tabMenuDuplicate
     case tabMenuClose
     case tabMenuCloseOthers
     case tabMenuCloseAll
@@ -558,6 +559,7 @@ enum L10nTable {
         .tabCloseDiscard: "放弃修改",
         .tabCloseMessage: "「%@」的修改还没保存，关闭后就会丢失。",
         .tabCloseHelp: "关闭页签",
+        .tabMenuDuplicate: "克隆页签",
         .tabMenuClose: "关闭页签",
         .tabMenuCloseOthers: "关闭其他页签",
         .tabMenuCloseAll: "关闭全部页签",
@@ -992,6 +994,7 @@ enum L10nTable {
         .tabCloseDiscard: "Discard Changes",
         .tabCloseMessage: "\"%@\" has unsaved changes that will be lost.",
         .tabCloseHelp: "Close Tab",
+        .tabMenuDuplicate: "Duplicate Tab",
         .tabMenuClose: "Close Tab",
         .tabMenuCloseOthers: "Close Other Tabs",
         .tabMenuCloseAll: "Close All Tabs",

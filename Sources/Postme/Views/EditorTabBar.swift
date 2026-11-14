@@ -61,6 +61,10 @@ struct EditorTabBar: View {
         .help(app.tabTitle(tab))
         // 关闭类操作的快捷入口：右键哪一格，「关闭其他」就保留哪一格。
         .contextMenu {
+            Button(app.t(.tabMenuDuplicate)) {
+                app.cloneTab(id: tab.id)
+            }
+            Divider()
             Button(app.t(.tabMenuClose)) {
                 app.requestCloseTab(id: tab.id)
             }

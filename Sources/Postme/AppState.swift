@@ -1324,6 +1324,22 @@ final class AppState {
         return tab.id
     }
 
+    /// 克隆页签：把某一格的草稿原样复制成紧挨着它的新一格。
+    ///
+    /// **副本不继承归属**（`nodeID` 为 nil）：否则两格指向同一个已保存请求，
+    /// 在副本里 ⌘S 会覆盖原件，「克隆」就变成了「同一个请求开两格」。
+    /// 未归属的副本按既有规则走保存弹窗，命名后才落成新请求。
+    @discardableResult
+    func cloneTab(id: UUID) -> UUID? {
+        guard let index = tabIndex(id) else { return nil }
+        let tab = EditorTab(draft: tabs[index].draft)
+        tabs.insert(tab, at: index + 1)
+        activeTabID = tab.id
+        selectedNodeID = nil
+        save()
+        return tab.id
+    }
+
     /// 切换页签。
     func activateTab(id: UUID) {
         guard tabIndex(id) != nil, id != activeTabID else { return }
