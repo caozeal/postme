@@ -631,17 +631,18 @@ undo a fixed behavior. They are now part of `Tests/PostmeTests/` and run with `s
   (the text lives in the tooltip and accessibility label); switching the `Image` back to a `Label`
   makes that test fail.
 - `swift build -c release`: zero warnings, zero errors
-- CLI: five `CLIWorkspaceTests` cover import/environment persistence, project activation with dirty
+- CLI: seven `CLIWorkspaceTests` cover import/environment persistence, project activation with dirty
   tabs (including a real `AppState` launch), request deletion and last-project protection, plus
-  create/update round-trips (UUIDs preserved, omitted name kept); two `CLIExitCodeTests` additionally
-  drive create/update through `PostmeCLI.run` with real JSON files and assert that an incomplete spec
-  is rejected without writing. An isolated end-to-end run also exercised all three import formats,
+  create/update round-trips (UUIDs preserved, omitted name kept) and folder CRUD / nesting /
+  request placement. Four `CLIExitCodeTests` drive create/update and the folder commands through
+  `PostmeCLI.run` and assert that an incomplete spec or an unknown `--in` parent is rejected
+  without writing. An isolated end-to-end run also exercised all three import formats,
   request/project/environment/history operations, Postman export, destructive-command confirmation
-  and exit codes. A full `swift test` on a macOS host with Xcode runs **437 tests** (7 skipped,
-  0 failures), including the four new cases; a Command Line Tools-only install has no XCTest and
-  cannot run the suite. The create/update paths were also verified against the built binary in an
-  isolated data directory: show → edit → update, both accepted JSON shapes, UUID preservation and
-  the negative control (exit code 2, no write).
+  and exit codes. A full `swift test` on a macOS host with Xcode runs **441 tests** (7 skipped,
+  0 failures); a Command Line Tools-only install has no XCTest and cannot run the suite. The
+  create/update and folder paths were also verified against the built binary in an isolated data
+  directory: show → edit → update, both JSON shapes, UUID preservation, folder paths / requestCount,
+  moving between folders and back to root, and the negative controls.
 - Localization: `LocalizationTests` asserts that both string tables
   cover every key, that format placeholders match between languages (including `%.1f`), that the
   English table contains no CJK characters, that a language change is observable (the mechanism

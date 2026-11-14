@@ -523,14 +523,15 @@ skills/postme/SKILL.md       agent 技能：给 AI agent 看的 CLI 用法（不
   抓窗口像素 + Vision OCR，确认请求栏上「复制为 cURL」**只渲染图标**、文字不再占用栏宽
   （说明文字在 tooltip 与无障碍标签里）；把 `Image` 改回 `Label` 会让该用例失败。
 - `swift build -c release` 零警告零错误
-- CLI：5 项 `CLIWorkspaceTests` 覆盖导入/环境持久化、带脏草稿的项目激活（含真实 `AppState` 启动）、
-  请求删除与最后一个项目保护，以及 create/update 落盘往返（UUID 保持、不传名称时保留原名）；
-  2 项 `CLIExitCodeTests` 用真实 JSON 文件经 `PostmeCLI.run` 跑通 create/update，并断言不完整输入
-  被拒绝且不写入。另在隔离目录完成三种格式导入、请求/项目/环境/历史操作、Postman 导出、删除确认
-  和退出码的端到端验证。全量 `swift test` 在装有 Xcode 的 macOS 环境共执行 **437 项测试**
-  （7 项跳过、0 失败），含本次新增的 4 项；只装 Command Line Tools 的环境缺 XCTest，跑不了全量。
-  create/update 本身还用编译出的二进制在隔离数据目录实测：`show` → 改 → `update`、两种 JSON 形态、
-  UUID 保持与负控（退出码 2、不写入）。
+- CLI：7 项 `CLIWorkspaceTests` 覆盖导入/环境持久化、带脏草稿的项目激活（含真实 `AppState` 启动）、
+  请求删除与最后一个项目保护，以及 create/update 落盘往返（UUID 保持、不传名称时保留原名）和
+  文件夹 CRUD / 嵌套 / 请求归属；4 项 `CLIExitCodeTests` 经 `PostmeCLI.run` 跑通 create/update 与
+  folder 命令，并断言不完整输入、`--in` 指向不存在的父文件夹都被拒绝且不写入。另在隔离目录完成
+  三种格式导入、请求/项目/环境/历史操作、Postman 导出、删除确认和退出码的端到端验证。全量
+  `swift test` 在装有 Xcode 的 macOS 环境共执行 **441 项测试**（7 项跳过、0 失败）；只装
+  Command Line Tools 的环境缺 XCTest，跑不了全量。create/update 与文件夹路径还用编译出的二进制
+  在隔离数据目录实测：`show` → 改 → `update`、两种 JSON 形态、UUID 保持、层级 path / requestCount、
+  文件夹间与移回根目录，以及各项负控。
 - 本地化：`LocalizationTests` 断言两张字符串表覆盖全部键、
   两语言间的格式占位符一致（含 `%.1f`）、英文表不含任何 CJK 字符、语言变化可被观察
   （菜单栏重算依赖的机制）、选择能往返落盘、缓存中的响应展示文本会重算，
