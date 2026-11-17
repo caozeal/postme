@@ -22,6 +22,19 @@ struct APIEnvironment: Identifiable, Codable, Hashable {
         return map
     }
 
+    /// 深拷贝环境及其变量行，供「克隆环境」使用。
+    ///
+    /// 环境与变量行都要换新 id：复制后的两组数据必须能被独立编辑，不能让 SwiftUI
+    /// 列表或未来按变量 id 追踪状态的功能把它们误认为同一项。
+    func copyWithNewID(name: String) -> APIEnvironment {
+        APIEnvironment(
+            name: name,
+            variables: variables.map {
+                KeyValueItem(id: UUID(), isEnabled: $0.isEnabled, key: $0.key, value: $0.value)
+            }
+        )
+    }
+
     /// 容错解码（见 `TolerantDecoding.swift`）。
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

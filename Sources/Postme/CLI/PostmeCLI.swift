@@ -126,12 +126,18 @@ enum PostmeCLI {
             return 0
         }
         if options.version {
-            print("postme 1.0.0 (workspace v\(Workspace.currentVersion))")
+            print("postme 1.0.1 (workspace v\(Workspace.currentVersion))")
             return 0
         }
 
         do {
             let directory = try dataDirectory(options)
+            if options.positionals == ["context", "current"] {
+                try options.allow()
+                let data = try AgentContextBridge.read(directory: directory ?? WorkspaceDirectory.defaultURL())
+                print(String(decoding: data, as: UTF8.self))
+                return 0
+            }
             let store = CLIWorkspace(directory: directory)
             try dispatch(options, store: store)
             return 0
@@ -333,6 +339,13 @@ enum PostmeCLI {
             try options.allow()
             let created = try store.createEnvironment(name: p[1])
             try emit(jsonObject(created), json: options.json) { "Created environment \(created.name) (\(created.id.uuidString))" }
+        case "clone":
+            guard p.count == 2 || p.count == 3 else {
+                throw CLIError.usage("Usage: environment clone <environment> [name]")
+            }
+            try options.allow()
+            let cloned = try store.cloneEnvironment(p[1], name: p.count == 3 ? p[2] : nil)
+            try emit(jsonObject(cloned), json: options.json) { "Cloned environment \(cloned.name) (\(cloned.id.uuidString))" }
         case "use":
             try expect(p, count: 2, usage: "environment use <environment>")
             try options.allow()
@@ -629,6 +642,7 @@ enum PostmeCLI {
     }
 
     private static func printHelp() {
+        print("  context current [--json]  Read live GUI context (session opt-in, read-only)")
         print("""
         postme — GUI and command-line API workspace
 
@@ -640,7 +654,7 @@ enum PostmeCLI {
           project list|create|rename|use|delete
           request list|show|create|update|delete
           folder list|create|rename|delete
-          environment list|create|use|deactivate|set|unset|delete
+          environment list|create|clone|use|deactivate|set|unset|delete
           history list|clear
           import openapi <file|-> [--project <project> | --new-project <name>]
           import postman <file|->

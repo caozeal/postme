@@ -285,6 +285,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case environmentsTitle
     case setAsActiveEnvironment
     case newEnvironment
+    case cloneEnvironment
+    case environmentCloneName
     case environmentNamePlaceholder
     case currentEnvironment
     case envKeyPlaceholder
@@ -764,6 +766,8 @@ enum L10nTable {
         .environmentsTitle: "环境与变量",
         .setAsActiveEnvironment: "设为当前环境",
         .newEnvironment: "新建环境",
+        .cloneEnvironment: "克隆环境",
+        .environmentCloneName: "%@ 副本",
         .environmentNamePlaceholder: "环境名",
         .currentEnvironment: "当前环境",
         .envKeyPlaceholder: "变量名（不含 {{ }}）",
@@ -1199,6 +1203,8 @@ enum L10nTable {
         .environmentsTitle: "Environments & Variables",
         .setAsActiveEnvironment: "Set as Active",
         .newEnvironment: "New Environment",
+        .cloneEnvironment: "Clone Environment",
+        .environmentCloneName: "%@ Copy",
         .environmentNamePlaceholder: "Environment name",
         .currentEnvironment: "Active Environment",
         .envKeyPlaceholder: "Variable name (without {{ }})",

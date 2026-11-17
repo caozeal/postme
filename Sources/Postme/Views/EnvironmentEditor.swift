@@ -55,6 +55,7 @@ struct EnvironmentEditor: View {
                     .tag(environment.id)
                     .contextMenu {
                         Button(app.t(.setAsActiveEnvironment)) { app.selectEnvironment(id: environment.id) }
+                        Button(app.t(.cloneEnvironment)) { cloneEnvironment(id: environment.id) }
                         Button(app.t(.deleteButton), role: .destructive) {
                             app.deleteEnvironment(id: environment.id)
                             if selectedID == environment.id { selectedID = app.environments.first?.id }
@@ -65,16 +66,33 @@ struct EnvironmentEditor: View {
             .listStyle(.sidebar)
 
             Divider()
-            Button {
-                let id = app.addEnvironment()
-                selectedID = id
-            } label: {
-                Label(app.t(.newEnvironment), systemImage: "plus")
-                    .font(.system(size: 12))
+            HStack(spacing: 12) {
+                Button {
+                    let id = app.addEnvironment()
+                    selectedID = id
+                } label: {
+                    Label(app.t(.newEnvironment), systemImage: "plus")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+
+                Button {
+                    if let id = selectedID { cloneEnvironment(id: id) }
+                } label: {
+                    Label(app.t(.cloneEnvironment), systemImage: "plus.square.on.square")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .disabled(selectedID.map { id in app.environments.contains { $0.id == id } } != true)
             }
-            .buttonStyle(.borderless)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func cloneEnvironment(id: UUID) {
+        if let cloneID = app.cloneEnvironment(id: id) {
+            selectedID = cloneID
         }
     }
 

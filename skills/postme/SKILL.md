@@ -16,7 +16,7 @@ Postme 是 macOS API 工作区。CLI 与 GUI 共用数据；默认目录为 `~/L
 - 文件夹：`folder list [--project <项目>]`、`folder create <名称> [--project <项目>] [--in <文件夹UUID>]`、`folder rename <文件夹UUID> <新名称>`、`folder delete <文件夹UUID> --yes`。`folder list --json` 输出的 `id` 就是文件夹 UUID，`path` 是含自身的层级路径，`requestCount` 统计该文件夹（含子文件夹）里的请求；`folder delete` 连同整个子树一起删。
 - 编辑请求：`create` / `update` 从文件或标准输入（`-`）读一份完整的 `APIRequest` JSON；也接受 `request show <UUID> --json` 的完整输出（取其 `request` 对象与顶层 `name`），所以 `show` → 改 → `update` 可直接闭环。名称优先级 `--name` > JSON 的 `name` > 请求自带名；`update` 不给名称时保留原名。节点 UUID 与请求 UUID 都保持不变，已打开的页签归属不失效。缺少 `url` / `method` / `headers` / `bodyKind` 的输入会以退出码 2 拒绝，不会静默写出空请求。`create` 未指定 `--project` 时落在当前活动项目；`--yes` 只用于删除与清空，编辑不需要。
 - 归属：`--folder <UUID>` 在 create 时把请求放进该文件夹、在 update 时把请求移过去；`--folder root`（或 `-`）移回项目根。不带 `--folder` 时 create 落项目根、update 保持原位置。目标文件夹不存在会报错，不会像 GUI 那样兜底建到根目录；`folder create --in` 同理。
-- 环境：`environment list|create <名称>|use <环境>|deactivate|set <环境> <键> <值>|unset <环境> <键>|delete <环境> --yes`；`env` 是 `environment` 的别名。
+- 环境：`environment list|create <名称>|clone <环境> [新名称]|use <环境>|deactivate|set <环境> <键> <值>|unset <环境> <键>|delete <环境> --yes`；`clone` 会复制所有变量、生成新 UUID，且不切换当前环境；省略新名称时自动取一个不重名的本地化「副本」名称。`env` 是 `environment` 的别名。
 - 历史：`history list [--limit <正整数>]`（默认 50 条）、`history clear --yes`。
 - 导入：`import openapi <文件|-> [--project <项目> | --new-project <名称>]`；`import postman <文件|->`；`import curl <文件|-> [--project <项目> | --new-project <名称>]`。`-` 从标准输入读取。OpenAPI 默认新建项目，指定 `--project` 时导入为其下文件夹；Postman 始终新建项目；cURL 默认导入当前项目根目录。`--project` 与 `--new-project` 不能同时使用。
 - 导出：`export postman <项目> [--output <文件|->]`，省略输出路径或使用 `-` 时输出 Postman JSON 到标准输出。
@@ -30,3 +30,26 @@ Postme 是 macOS API 工作区。CLI 与 GUI 共用数据；默认目录为 `~/L
 写操作与 GUI 共用短时锁和磁盘指纹检查：退出码 `3` 表示工作区忙或磁盘发生冲突，本次未写入；在重新读取最新状态后可重试，反复冲突则停止并报告。退出码 `0` 成功、`1` 操作失败、`2` 参数错误。只读操作可能跨多个文件读到非原子快照。
 
 `request show`、JSON 格式的环境列表、导入文件和导出集合可能包含令牌、密码或其他敏感值；仅在任务需要时读取或展示，报告时避免无关泄露。测试写操作时使用独立的 `--data-dir`，不要触碰真实工作区。
+
+## Live GUI context (read-only, session opt-in)
+
+`postme context current --json` reads an atomic snapshot from the running GUI.
+The user must enable **Agent context** in Settings each session. Do not enable it
+on their behalf. This endpoint never sends HTTP or changes workspace data.
+
+Use sessionID + tabID + runID to correlate results. `requestID` is null for an
+unsaved request; `draftID` still identifies it. Re-read after the user switches
+interface/environment or reruns; never attach an old result to a newer request.
+`draftChangedSinceRun` and `runEnvironmentID` identify changes since execution.
+`resultComplete=false` means running, cancelled, failed, absent or truncated,
+not success. `http_error` describes non-2xx HTTP, not a test assertion verdict.
+
+Request/project/environment names are shared (known workspace credential values are removed). URLs are withheld.
+Only bounded JSON response structure/numbers/booleans are returned. All string
+values, raw text, header values, URLs, credentials and error text are
+withheld. SSE returns progress counts, not event contents. Do not claim to have
+read omitted details; ask the user for a reviewed excerpt if necessary. Key-name
+redaction is defense in depth, not a guarantee of anonymity. The user's agent
+may send returned data to its model provider. No raw/unredacted bypass exists.
+`context_unavailable` means the GUI is closed, sharing is disabled or unavailable;
+do not infer current selection from persisted history instead.

@@ -88,6 +88,76 @@ final class LLMMergerBox {
 @Observable
 final class AppState {
 
+    // MARK: - Session-only read-only Agent context
+    private var agentBridge: AgentContextBridge?
+    private(set) var agentContextEnabled = false
+    private(set) var agentContextError: String?
+    func setAgentContextEnabled(_ enabled: Bool) {
+        agentContextError = nil
+        guard enabled else { agentContextEnabled = false; agentBridge?.stop(); agentBridge = nil; return }
+        guard !agentContextEnabled else { return }
+        let bridge = AgentContextBridge(directory: persistence.directoryURL)
+        do {
+            try FileManager.default.createDirectory(at: persistence.directoryURL, withIntermediateDirectories: true)
+            try bridge.start { [weak self] in
+                guard let self, self.agentContextEnabled else { return Data("{\"available\":false}".utf8) }
+                return self.agentContextData()
+            }
+            agentBridge = bridge
+            agentContextEnabled = true
+        } catch { agentContextError = String(describing: error) }
+    }
+
+    func agentContextData() -> Data {
+        let tab = activeTab
+        let state: String = tab.isSending ? "running" : tab.agentRunCancelled ? "cancelled" :
+            tab.errorMessage != nil ? "failed" : tab.response != nil ? (tab.response!.isSuccess ? "completed" : "http_error") : "not_run"
+        let label: (String) -> String = { value in
+            var text = value
+            // Labels can accidentally contain credentials; remove known workspace values.
+            let requests = [tab.draft, tab.agentRunRequest].compactMap { $0 }
+            let secrets = self.workspace.environments.flatMap { $0.variables.map(\.value) } + requests.flatMap {
+                [$0.auth.bearerToken, $0.auth.username, $0.auth.password, $0.auth.apiKeyValue] +
+                    $0.cookies.map(\.value) + $0.headers.filter { AgentContextSanitizer.sensitive($0.key) }.map(\.value)
+            }
+            for secret in secrets.filter({ !$0.isEmpty }).sorted(by: { $0.count > $1.count }) {
+                text = text.replacingOccurrences(of: secret, with: "[redacted]")
+            }
+            return String(text.prefix(128))
+        }
+        var context: [String: Any] = [
+            "schemaVersion": 1, "capturedAt": ISO8601DateFormatter().string(from: Date()),
+            "sessionID": agentSessionID.uuidString, "tabID": tab.id.uuidString,
+            "projectID": workspace.activeProjectID?.uuidString as Any? ?? NSNull(),
+            "requestID": tab.nodeID?.uuidString as Any? ?? NSNull(),
+            "draftID": tab.draft.id.uuidString, "method": tab.draft.method.rawValue,
+            "requestName": label(tab.draft.name), "projectName": label(activeProject?.name ?? ""),
+            "environmentName": activeEnvironment.map { label($0.name) } as Any? ?? NSNull(),
+            "environmentID": workspace.activeEnvironmentID?.uuidString as Any? ?? NSNull(),
+            "unsavedChanges": tab.isDirty,
+            "state": state, "runID": tab.agentRunID?.uuidString as Any? ?? NSNull(),
+            "runEnvironmentID": tab.agentRunEnvironmentID?.uuidString as Any? ?? NSNull(),
+            "runMethod": tab.agentRunRequest?.method.rawValue as Any? ?? NSNull(),
+            "runRequestName": tab.agentRunRequest.map { label($0.name) } as Any? ?? NSNull(),
+            "environmentChangedSinceRun": tab.agentRunID.map { _ in tab.agentRunEnvironmentID != workspace.activeEnvironmentID } as Any? ?? NSNull(),
+            "draftChangedSinceRun": tab.agentRunRequest.map { $0 != tab.draft } as Any? ?? NSNull(),
+            "runStartedAt": tab.agentRunStartedAt.map { ISO8601DateFormatter().string(from: $0) } as Any? ?? NSNull(),
+            "resultComplete": !tab.isSending && !tab.agentRunCancelled && tab.errorMessage == nil && tab.response != nil && !(tab.response?.isBodyTruncated ?? false),
+            "errorPresent": tab.errorMessage != nil,
+            "privacy": "Session opt-in; Labels shared; URL, header values, errors and free-text body strings withheld. JSON structure and numeric values may still contain sensitive data."
+        ]
+        if let response = tab.response {
+            context["result"] = ["statusCode": response.statusCode, "durationSeconds": response.timing.total,
+                                 "bodyTruncated": response.isBodyTruncated, "body": AgentContextSanitizer.body(response.body)]
+        } else { context["result"] = NSNull() }
+        if tab.stream.isEventStream {
+            context["stream"] = ["receivedBytes": tab.stream.receivedBytes, "retainedEvents": tab.stream.events.count,
+                                  "droppedEvents": tab.stream.droppedEventCount, "contentWithheld": true]
+        }
+        return (try? JSONSerialization.data(withJSONObject: context, options: [.sortedKeys])) ?? Data("{}".utf8)
+    }
+    private let agentSessionID = UUID()
+
     // MARK: - 持久化
 
     /// 全部持久化数据。修改后调用 `save()`。
@@ -870,6 +940,13 @@ final class AppState {
         let tabID = activeTabID
         guard let index = tabIndex(tabID), !tabs[index].isSending else { return }
         tabs[index].isSending = true
+        tabs[index].agentRunID = UUID()
+        tabs[index].agentRunStartedAt = Date()
+        tabs[index].agentRunRequest = tabs[index].draft
+        tabs[index].agentRunEnvironmentID = workspace.activeEnvironmentID
+        tabs[index].agentRunCancelled = false
+        tabs[index].response = nil
+        tabs[index].responseBodyText = ""
         tabs[index].errorMessage = nil
         tabs[index].stream = StreamState()
         // 上一次是 SSE、用户停在事件 / 大模型输出分页：这次还没确认是 SSE，分页先回到 body，
@@ -963,6 +1040,7 @@ final class AppState {
                 }
             }
         } catch RequestFailure.cancelled {
+            if let index = tabIndex(tabID) { tabs[index].agentRunCancelled = true }
             // 用户主动取消：不是失败。**保留已收内容**，不报错、不记历史
             // （§6.1-6：不要走非 SSE 那套 clearResponse）。
             let pending = publisher.takePending()
@@ -1766,6 +1844,18 @@ final class AppState {
         }
         save()
         return environment.id
+    }
+
+    /// 克隆环境及其全部变量。副本不自动切成当前环境：克隆通常是为了先改值，
+    /// 不能在用户确认前悄悄改变下一次请求的变量替换结果。
+    @discardableResult
+    func cloneEnvironment(id: UUID) -> UUID? {
+        guard let source = workspace.environments.first(where: { $0.id == id }) else { return nil }
+        let name = uniqueEnvironmentName(t(.environmentCloneName, source.name))
+        let clone = source.copyWithNewID(name: name)
+        workspace.environments.append(clone)
+        save()
+        return clone.id
     }
 
     func updateEnvironment(_ environment: APIEnvironment) {

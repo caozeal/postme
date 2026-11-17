@@ -119,7 +119,7 @@ WKWebView——光 WebKit 的内容进程就是几十到一百多 MB，省不掉
 - 旧版 workspace.json 自动迁移：原顶层集合整体收进一个「默认项目」，节点原样保留
 
 ### 环境变量
-- 多环境切换，`{{变量名}}` 替换作用于 URL / Headers / 参数 / 请求体
+- 多环境切换；克隆环境会复制全部变量，新副本可独立修改，`{{变量名}}` 替换作用于 URL / Headers / 参数 / 请求体
 - 内置动态变量（无需定义）：
 
   | 变量 | 值 |
@@ -180,6 +180,7 @@ build/postme --json request list --project "Demo API"
 build/postme request show <请求 UUID>
 build/postme environment create Development
 build/postme environment set Development baseUrl https://localhost:8080
+build/postme environment clone Development Staging
 build/postme export postman "Demo API" --output ./collection.json
 build/postme folder create "Users" --project "Demo API"
 build/postme --json folder list --project "Demo API"
@@ -213,8 +214,8 @@ build/postme folder delete <文件夹 UUID> --yes
   请求移过去，`--folder root`（或 `-`）移回项目根；不带 `--folder` 时 create 落项目根、update 保持
   原位置。目标文件夹不存在会直接报错，不会像 GUI 那样兜底建到根目录。
   `folder delete` 连同整个子树一起删，必须 `--yes`。
-- 项目、文件夹、请求、环境和历史的完整子命令见 `build/postme --help`；环境还支持 `use`、
-  `deactivate`、`unset` 和 `delete`。
+- 项目、文件夹、请求、环境和历史的完整子命令见 `build/postme --help`；环境还支持 `clone`、`use`、
+  `deactivate`、`unset` 和 `delete`。`environment clone` 不会切换当前环境；不传新名称时会自动生成不重名的「副本」名称。
 
 > **并发写入会被拒绝，绝不静默合并。** GUI 与 CLI 只在写操作期间短暂持有排他锁，并在每次写入前
 > 比对磁盘指纹（乐观 CAS）。写命令若发现目录正被占用或磁盘已被改动，会以退出码 3 失败且
@@ -589,3 +590,24 @@ skills/postme/SKILL.md       agent 技能：给 AI agent 看的 CLI 用法（不
 ## 许可
 
 [MIT](LICENSE) © 2026 caozeal
+
+### Agent 感知当前界面（只读预览版）
+
+打开 GUI 的「设置 → Agent context」，明确启用本次会话访问，然后运行：
+
+```bash
+build/postme context current --json
+```
+
+CLI 直接读取 GUI 内存中的选中页签、请求名称/ID、环境、运行状态与有限结果，
+不从历史记录推测当前界面，不发送请求，不修改工作区。关闭开关即时撤销，重启默认关闭。
+同一系统用户下的本地进程可以访问该接口；连接的编码 Agent 可能把结果发给其模型服务。
+
+`sessionID`、`tabID`、`runID` 标识会话/页签/执行，`draftChangedSinceRun` 和
+`environmentChangedSinceRun` 标识运行后编辑或切换环境。`resultComplete` 只表示
+网络传输完整，不代表业务断言通过。HTTP 非 2xx 标为 `http_error`，取消独立标记。
+
+目前返回状态码、耗时、最大 32 KiB 输入的脱敏 JSON 结构/数字/布尔值，SSE 仅返回计数。
+自由文本、正文字符串、原始 URL、Header 值、错误正文不会返回；未开放原文绕过。
+JSON 导出有深度/条目限制，`exportMayBeIncomplete` 提醒内容不能视为完整证据。
+名称会去除已知环境/认证值，但不能保证任意字段都无敏感信息；仅在信任 Agent 时开启。

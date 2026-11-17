@@ -149,7 +149,7 @@ The cost is macOS-only; the payoff is an order-of-magnitude difference in memory
   "默认项目" project with node IDs preserved
 
 ### Environment variables
-- Multiple environments; `{{name}}` substitution applies to URL, headers, parameters and body
+- Multiple environments; clone an environment to create an independently editable copy of all its variables; `{{name}}` substitution applies to URL, headers, parameters and body
 - Built-in dynamic variables (no definition needed):
 
   | Variable | Value |
@@ -216,6 +216,7 @@ build/postme --json request list --project "Demo API"
 build/postme request show <request-uuid>
 build/postme environment create Development
 build/postme environment set Development baseUrl https://localhost:8080
+build/postme environment clone Development Staging
 build/postme export postman "Demo API" --output ./collection.json
 build/postme folder create "Users" --project "Demo API"
 build/postme --json folder list --project "Demo API"
@@ -255,7 +256,8 @@ build/postme folder delete <folder-uuid> --yes
   is an error, never a silent fallback to the root. `folder delete` removes the whole subtree and
   needs `--yes`.
 - Run `build/postme <command>` for projects, folders, requests, environments and history. Environment
-  commands also support `use`, `deactivate`, `unset` and `delete`.
+  commands also support `clone`, `use`, `deactivate`, `unset` and `delete`. `environment clone`
+  keeps the active environment unchanged; omit its optional new name to use a unique “Copy” name.
 
 > **Concurrent writes are rejected, never silently merged.** GUI and CLI take a short exclusive
 > lock only while writing and compare a disk fingerprint before every write (optimistic CAS). A

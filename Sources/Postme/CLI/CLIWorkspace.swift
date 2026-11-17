@@ -386,6 +386,21 @@ final class CLIWorkspace {
         return created
     }
 
+    /// 克隆环境时不改变活动环境；脚本显式 `environment use` 后才切换，避免复制操作
+    /// 意外影响后续请求。未给名称时使用当前工作区语言的「副本」名称。
+    func cloneEnvironment(_ selector: String, name: String? = nil) throws -> APIEnvironment {
+        let source = try environment(selector)
+        let requested = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name != nil, requested?.isEmpty == true {
+            throw CLIError("Environment name cannot be empty.")
+        }
+        let cloneName = uniqueEnvironmentName(requested ?? localizer(.environmentCloneName, source.name))
+        let clone = source.copyWithNewID(name: cloneName)
+        workspace.environments.append(clone)
+        try save()
+        return clone
+    }
+
     func activateEnvironment(_ selector: String?) throws -> APIEnvironment? {
         if let selector {
             let target = try environment(selector)

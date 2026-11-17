@@ -128,6 +128,11 @@ struct EditorTab: Identifiable, Codable {
     /// 上一次发送中未填写的路径参数名（URL 里的 `{name}` / `:name`）。
     var unresolvedPathParams: [String] = []
     var isSending: Bool = false
+    var agentRunID: UUID?
+    var agentRunStartedAt: Date?
+    var agentRunRequest: APIRequest?
+    var agentRunEnvironmentID: UUID?
+    var agentRunCancelled = false
 
     init(id: UUID = UUID(), draft: APIRequest, baseline: APIRequest? = nil, nodeID: UUID? = nil) {
         self.id = id
@@ -152,10 +157,20 @@ struct EditorTab: Identifiable, Codable {
         unresolvedVariables = old.unresolvedVariables
         unresolvedPathParams = old.unresolvedPathParams
         isSending = old.isSending
+        agentRunID = old.agentRunID
+        agentRunStartedAt = old.agentRunStartedAt
+        agentRunRequest = old.agentRunRequest
+        agentRunEnvironmentID = old.agentRunEnvironmentID
+        agentRunCancelled = old.agentRunCancelled
     }
 
     /// 清掉与某个请求相关的运行期状态（换请求内容时用）。
     mutating func clearResponse() {
+        agentRunID = nil
+        agentRunStartedAt = nil
+        agentRunRequest = nil
+        agentRunEnvironmentID = nil
+        agentRunCancelled = false
         response = nil
         responseBodyText = ""
         errorMessage = nil

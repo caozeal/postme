@@ -41,6 +41,40 @@ final class CLIWorkspaceTests: XCTestCase {
         }
     }
 
+    func testCloneEnvironmentCopiesVariablesWithFreshIDsAndKeepsActiveEnvironment() throws {
+        try MainActor.assumeIsolated {
+            let dir = makeTempDir()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let source = APIEnvironment(
+                name: "Development",
+                variables: [
+                    KeyValueItem(key: "baseUrl", value: "https://dev.example.com"),
+                    KeyValueItem(isEnabled: false, key: "token", value: "secret")
+                ]
+            )
+            var workspace = Workspace()
+            workspace.settings.language = .en
+            workspace.environments = [source]
+            workspace.activeEnvironmentID = source.id
+            XCTAssertTrue(PersistenceService(directory: dir).saveNow(workspace))
+
+            let store = CLIWorkspace(directory: dir)
+            let cloned = try store.cloneEnvironment(source.id.uuidString)
+
+            XCTAssertEqual(cloned.name, "Development Copy")
+            XCTAssertNotEqual(cloned.id, source.id)
+            XCTAssertEqual(cloned.variables.map(\.isEnabled), source.variables.map(\.isEnabled))
+            XCTAssertEqual(cloned.variables.map(\.key), source.variables.map(\.key))
+            XCTAssertEqual(cloned.variables.map(\.value), source.variables.map(\.value))
+            XCTAssertTrue(Set(cloned.variables.map(\.id)).intersection(source.variables.map(\.id)).isEmpty)
+            XCTAssertEqual(store.workspace.activeEnvironmentID, source.id, "克隆不应偷偷切换活动环境")
+
+            let reloaded = CLIWorkspace(directory: dir)
+            XCTAssertEqual(reloaded.workspace.environments.last, cloned)
+            XCTAssertEqual(reloaded.workspace.activeEnvironmentID, source.id)
+        }
+    }
+
     func testProjectActivationDoesNotLoseDirtyTabOrBounceBackOnGUILaunch() throws {
         try MainActor.assumeIsolated {
             let dir = makeTempDir()

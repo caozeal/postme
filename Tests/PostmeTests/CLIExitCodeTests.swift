@@ -95,6 +95,21 @@ final class CLIExitCodeTests: XCTestCase {
         XCTAssertEqual(PostmeCLI.run(arguments: ["--data-dir", dir.path, "bogus"]), 2)
     }
 
+    func testEnvironmentCloneCommandCreatesNamedCopyWithoutActivatingIt() throws {
+        let dir = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(PostmeCLI.run(arguments: ["--data-dir", dir.path, "environment", "create", "Dev"]), 0)
+        XCTAssertEqual(PostmeCLI.run(arguments: ["--data-dir", dir.path, "environment", "set", "Dev", "baseUrl", "https://dev.example.com"]), 0)
+        XCTAssertEqual(PostmeCLI.run(arguments: ["--data-dir", dir.path, "--json", "environment", "clone", "Dev", "Staging"]), 0)
+
+        let store = CLIWorkspace(directory: dir)
+        let source = try XCTUnwrap(store.workspace.environments.first { $0.name == "Dev" })
+        let clone = try XCTUnwrap(store.workspace.environments.first { $0.name == "Staging" })
+        XCTAssertNotEqual(clone.id, source.id)
+        XCTAssertEqual(clone.variableMap, source.variableMap)
+        XCTAssertEqual(store.workspace.activeEnvironmentID, source.id)
+    }
+
     func testRequestCreateAndUpdateFromJSON() throws {
         let dir = makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -85,6 +85,36 @@ final class ProjectLevelTests: XCTestCase {
         XCTAssertEqual(app.environments.count, 2)
     }
 
+    func testCloneEnvironmentCopiesVariablesWithNewIDsWithoutActivatingIt() throws {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sourceID = app.addEnvironment(name: "开发")
+        let source = APIEnvironment(
+            id: sourceID,
+            name: "开发",
+            variables: [
+                KeyValueItem(key: "baseUrl", value: "https://dev.example.com"),
+                KeyValueItem(isEnabled: false, key: "token", value: "secret")
+            ]
+        )
+        app.updateEnvironment(source)
+
+        let cloneID = try XCTUnwrap(app.cloneEnvironment(id: sourceID))
+        let clone = app.environments.first { $0.id == cloneID }
+
+        XCTAssertEqual(clone?.name, "开发 副本")
+        XCTAssertEqual(clone?.variables.map(\.isEnabled), source.variables.map(\.isEnabled))
+        XCTAssertEqual(clone?.variables.map(\.key), source.variables.map(\.key))
+        XCTAssertEqual(clone?.variables.map(\.value), source.variables.map(\.value))
+        XCTAssertTrue(Set(clone?.variables.map(\.id) ?? []).intersection(source.variables.map(\.id)).isEmpty)
+        XCTAssertEqual(app.workspace.activeEnvironmentID, sourceID, "克隆不应改变当前环境")
+
+        var editedClone = try XCTUnwrap(clone)
+        editedClone.variables[0].value = "https://staging.example.com"
+        app.updateEnvironment(editedClone)
+        XCTAssertEqual(app.environments.first { $0.id == sourceID }?.variables[0].value, "https://dev.example.com")
+    }
+
     // MARK: - 不变量：至少一个项目
 
     func testFreshWorkspaceGetsDefaultProject() {
