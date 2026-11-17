@@ -116,10 +116,21 @@ final class AppState {
             var text = value
             // Labels can accidentally contain credentials; remove known workspace values.
             let requests = [tab.draft, tab.agentRunRequest].compactMap { $0 }
-            let secrets = self.workspace.environments.flatMap { $0.variables.map(\.value) } + requests.flatMap {
-                [$0.auth.bearerToken, $0.auth.username, $0.auth.password, $0.auth.apiKeyValue] +
-                    $0.cookies.map(\.value) + $0.headers.filter { AgentContextSanitizer.sensitive($0.key) }.map(\.value)
+            let environmentSecrets = self.workspace.environments.flatMap { $0.variables.map(\.value) }
+            let requestSecrets = requests.flatMap { request -> [String] in
+                let authenticationSecrets = [
+                    request.auth.bearerToken,
+                    request.auth.username,
+                    request.auth.password,
+                    request.auth.apiKeyValue
+                ]
+                let cookieSecrets = request.cookies.map(\.value)
+                let headerSecrets = request.headers
+                    .filter { AgentContextSanitizer.sensitive($0.key) }
+                    .map(\.value)
+                return authenticationSecrets + cookieSecrets + headerSecrets
             }
+            let secrets = environmentSecrets + requestSecrets
             for secret in secrets.filter({ !$0.isEmpty }).sorted(by: { $0.count > $1.count }) {
                 text = text.replacingOccurrences(of: secret, with: "[redacted]")
             }
