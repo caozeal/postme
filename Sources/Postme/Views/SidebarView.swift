@@ -100,11 +100,13 @@ struct SidebarView: View {
             Button {
                 beginNewFolder(parentID: nil)
             } label: {
-                Image(systemName: "plus")
+                Image(icon: .newFolder)
+                    .font(.system(size: 12, weight: .medium))
             }
             .buttonStyle(.borderless)
             .fixedSize()
             .help(app.t(.sidebarNewFolder))
+            .accessibilityLabel(app.t(.sidebarNewFolder))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -112,15 +114,13 @@ struct SidebarView: View {
 
     private var importExportMenu: some View {
         Menu {
-            Button(app.t(.menuImportOpenAPI)) { FileActions.importOpenAPI(into: app) }
-            Button(app.t(.menuImportPostman)) { FileActions.importPostman(into: app) }
-            Button(app.t(.menuImportCurl)) { app.showCurlImport = true }
+            importActions
             Divider()
             Button(app.t(.menuExportPostman)) { FileActions.exportPostman(from: app) }
                 .disabled(app.activeProject?.children.isEmpty ?? true)
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "square.and.arrow.down")
+                Image(icon: .transfer)
                     .font(.system(size: 10))
                 Text(app.t(.sidebarImportExport))
                     .font(.system(size: 11))
@@ -130,6 +130,13 @@ struct SidebarView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help(app.t(.sidebarImportExportHelp))
+    }
+
+    @ViewBuilder
+    private var importActions: some View {
+        Button(app.t(.menuImportOpenAPI)) { FileActions.importOpenAPI(into: app) }
+        Button(app.t(.menuImportPostman)) { FileActions.importPostman(into: app) }
+        Button(app.t(.menuImportCurl)) { app.showCurlImport = true }
     }
 
     // MARK: - 项目切换器（参考 ApiPost：侧栏顶部下拉，目录树只显示当前项目）
@@ -153,12 +160,12 @@ struct SidebarView: View {
             .disabled(app.projects.count <= 1)
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "square.stack.3d.up")
-                    .foregroundStyle(.secondary)
+                Image(icon: .project)
+                    .foregroundStyle(BrandColor.icon)
                 Text(app.activeProject?.name ?? app.t(.sidebarNoProject))
                     .lineLimit(1)
                 Spacer()
-                Image(systemName: "chevron.up.chevron.down")
+                Image(icon: .menu)
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
             }
@@ -178,21 +185,22 @@ struct SidebarView: View {
     private var searchBar: some View {
         @Bindable var app = app
         return HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
+            Image(icon: .search)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             TextField(app.t(.sidebarSearchPlaceholder), text: $app.searchKeyword)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($searchFocused)
+                .onExitCommand(perform: app.searchKeyword.isEmpty ? nil : clearSearch)
             if !app.searchKeyword.isEmpty {
-                Button {
-                    app.searchKeyword = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
+                Button(action: clearSearch) {
+                    Image(icon: .clear)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
+                .help(app.t(.sidebarClearSearch))
+                .accessibilityLabel(app.t(.sidebarClearSearch))
             }
         }
         .padding(.horizontal, 10)
@@ -207,7 +215,7 @@ struct SidebarView: View {
             if app.isSearching {
                 Section(app.t(.sidebarSearchResultsSection, app.searchResults.count)) {
                     if app.searchResults.isEmpty {
-                        emptyHint(app.t(.sidebarNoSearchResults))
+                        emptySearchResults
                     }
                     ForEach(app.searchResults) { node in
                         row(for: node)
@@ -217,7 +225,7 @@ struct SidebarView: View {
                 Section(app.t(.sidebarTreeSection)) {
                     let children = app.activeProject?.children ?? []
                     if children.isEmpty {
-                        emptyHint(app.t(.sidebarEmptyProject))
+                        emptyProject
                     }
                     OutlineGroup(children, children: \.children) { node in
                         row(for: node)
@@ -226,6 +234,38 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+    }
+
+    private var emptySearchResults: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label(app.t(.sidebarNoSearchResults), icon: .search)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Button(app.t(.sidebarClearSearch), action: clearSearch)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func clearSearch() {
+        app.searchKeyword = ""
+        searchFocused = true
+    }
+
+    private var emptyProject: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            emptyHint(app.t(.sidebarEmptyProject))
+            HStack(spacing: 8) {
+                Button(app.t(.tabNewMenuNewRequest)) { app.newRequest() }
+                    .buttonStyle(.bordered)
+                Menu(app.t(.importButton)) { importActions }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+            }
+            .controlSize(.small)
+        }
+        .padding(.vertical, 5)
     }
 
     // MARK: - 历史（左下角，默认收起）
@@ -258,7 +298,7 @@ struct SidebarView: View {
                 app.setHistoryExpanded(!expanded)
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    Image(icon: expanded ? .expanded : .collapsed)
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 10)
@@ -391,7 +431,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func rowContent(for node: CollectionNode) -> some View {
         if case .folder(let folder) = node {
-            Label(folder.name, systemImage: "folder")
+            Label(folder.name, icon: .folder)
                 .contextMenu { folderMenu(folder) }
         } else if let saved = node.savedRequest {
             HStack(spacing: 6) {
@@ -440,7 +480,7 @@ struct SidebarView: View {
 
     private func dragPreview(for node: CollectionNode) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: node.isFolder ? "folder" : "doc.text")
+            Image(icon: node.isFolder ? .folder : .request)
                 .foregroundStyle(.secondary)
             Text(node.name)
                 .lineLimit(1)
@@ -453,9 +493,9 @@ struct SidebarView: View {
 
     private func methodBadge(_ method: HTTPMethod) -> some View {
         Text(method.rawValue)
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
             .foregroundStyle(method.tint)
-            .frame(width: 36, alignment: .leading)
+            .frame(width: 44, alignment: .leading)
     }
 
     private func historyRow(_ entry: HistoryEntry) -> some View {
@@ -476,9 +516,9 @@ struct SidebarView: View {
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(statusTint(for: code))
             } else {
-                Image(systemName: "xmark")
+                Image(icon: .failure)
                     .font(.system(size: 9))
-                    .foregroundStyle(Color(red: 0.85, green: 0.25, blue: 0.25))
+                    .foregroundStyle(statusTint(for: 500))
             }
         }
         .contentShape(Rectangle())

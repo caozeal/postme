@@ -126,7 +126,7 @@ enum PostmeCLI {
             return 0
         }
         if options.version {
-            print("postme 1.0.1 (workspace v\(Workspace.currentVersion))")
+            print("postme 1.1.0 (workspace v\(Workspace.currentVersion))")
             return 0
         }
 
@@ -642,7 +642,7 @@ enum PostmeCLI {
     }
 
     private static func printHelp() {
-        print("  context current [--json]  Read live GUI context (session opt-in, read-only)")
+        print("  context current [--json]  Read live GUI context (enabled by default, read-only)")
         print("""
         postme — GUI and command-line API workspace
 

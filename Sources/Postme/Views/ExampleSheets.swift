@@ -147,7 +147,7 @@ struct ExampleViewerSheet: View {
     private var footer: some View {
         HStack(spacing: 10) {
             if example.isTruncated {
-                Label(app.t(.exampleTruncated), systemImage: "scissors")
+                Label(app.t(.exampleTruncated), icon: .truncated)
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
             }
@@ -160,9 +160,8 @@ struct ExampleViewerSheet: View {
             .font(.system(size: 11))
 
             if !example.isBinary {
-                Button(app.t(.copyButton)) {
-                    copyToClipboard(example.bodyText)
-                }
+                CopyButton(title: app.t(.copyButton)) { example.bodyText }
+                .labelStyle(.titleOnly)
                 .font(.system(size: 11))
             }
 

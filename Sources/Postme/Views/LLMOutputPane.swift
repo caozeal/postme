@@ -76,7 +76,7 @@ struct LLMOutputPane: View {
             if llm.droppedFieldCount > 0 {
                 Label(
                     app.t(.llmFieldsDropped, llm.droppedFieldCount),
-                    systemImage: "exclamationmark.triangle.fill"
+                    icon: .warning
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(.orange)
@@ -124,7 +124,7 @@ struct LLMOutputPane: View {
             VStack(spacing: 0) {
                 if selected.isTruncated {
                     HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
+                        Image(icon: .warning)
                             .font(.system(size: 10))
                         Text(app.t(.llmFieldTruncated, formatBytes(LLMStreamMerger.maxFieldBytes)))
                             .font(.system(size: 11))
@@ -176,7 +176,7 @@ struct LLMOutputPane: View {
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                                 if field.isTruncated {
-                                    Image(systemName: "exclamationmark.triangle.fill")
+                                    Image(icon: .warning)
                                         .font(.system(size: 9))
                                         .foregroundStyle(.orange)
                                 }
@@ -194,27 +194,18 @@ struct LLMOutputPane: View {
     // MARK: - 空态与错误
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Spacer()
-            Text(app.t(.llmNoJoinableFields, llm.parsedEventCount, llm.unparsedEventCount))
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button(app.t(.llmCustomPathButton)) {
-                customPathInput = ""
-                customPathError = nil
-                isCustomPathSheetPresented = true
-            }
-            .font(.system(size: 11))
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 24)
+        let stream = app.activeTab.stream
+        let waiting = stream.status == .streaming && stream.events.isEmpty
+        return ResponsePlaceholder(
+            icon: waiting ? .receiving : .formattedResponse,
+            title: app.t(waiting ? .streamWaitingForEvent : .llmNoJoinableFieldsTitle),
+            hint: waiting ? nil : app.t(.llmNoJoinableFields, llm.parsedEventCount, llm.unparsedEventCount)
+        )
     }
 
     private func streamErrorBanner(_ message: String) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(icon: .failure)
                 .font(.system(size: 10))
             Text(app.t(.llmErrorFromStream, message))
                 .font(.system(size: 11))
@@ -265,7 +256,7 @@ struct LLMOutputPane: View {
                                 Button {
                                     app.removeLLMCustomPath(path)
                                 } label: {
-                                    Image(systemName: "trash")
+                                    Image(icon: .delete)
                                         .font(.system(size: 10))
                                 }
                                 .buttonStyle(.borderless)

@@ -68,50 +68,117 @@ enum VariableResolver {
         return (output, unresolved)
     }
 
-    /// 对整个请求做替换：URL / headers / query / body / form 字段 / 认证字段。
-    static func resolve(_ request: APIRequest, variables: [String: String]) -> (request: APIRequest, unresolved: [String]) {
+    struct Resolution {
+        let request: APIRequest
+        let missingVariables: [MissingRequestVariable]
+        var unresolved: [String] { Set(missingVariables.map(\.name)).sorted() }
+    }
+
+    /// 替换请求字段，并记录这次请求会用到的未定义变量及其编辑位置。
+    static func resolve(_ request: APIRequest, variables: [String: String]) -> Resolution {
         var resolved = request
-        var unresolved = Set<String>()
+        var missingVariables: [MissingRequestVariable] = []
 
-        func apply(_ text: String) -> String {
-            let (out, missing) = resolve(text, variables: variables)
-            unresolved.formUnion(missing)
-            return out
+        func apply(_ text: String, at field: RequestVariableField) -> String {
+            let result = resolve(text, variables: variables)
+            missingVariables += Set(result.unresolved).sorted().map { MissingRequestVariable(name: $0, field: field) }
+            return result.text
         }
 
-        resolved.url = apply(request.url)
-        resolved.rawContentType = apply(request.rawContentType)
-        resolved.bodyText = apply(request.bodyText)
+        func rows(_ items: [KeyValueItem], in table: RequestVariableField.Table) -> [KeyValueItem] {
+            items.map { item in
+                var item = item
+                if table != .path {
+                    item.key = apply(item.key, at: .row(table, item.id, .name))
+                }
+                item.value = apply(item.value, at: .row(table, item.id, .value))
+                return item
+            }
+        }
 
-        resolved.headers = request.headers.map { item in
-            KeyValueItem(id: item.id, isEnabled: item.isEnabled, key: apply(item.key), value: apply(item.value))
-        }
-        resolved.queryParams = request.queryParams.map { item in
-            KeyValueItem(id: item.id, isEnabled: item.isEnabled, key: apply(item.key), value: apply(item.value))
-        }
-        resolved.formFields = request.formFields.map { item in
-            KeyValueItem(id: item.id, isEnabled: item.isEnabled, key: apply(item.key), value: apply(item.value))
-        }
+        resolved.url = apply(request.url, at: .url)
+        resolved.rawContentType = apply(request.rawContentType, at: .rawContentType)
+        resolved.bodyText = apply(request.bodyText, at: .body)
+        resolved.headers = rows(request.headers, in: .headers)
+        resolved.queryParams = rows(request.queryParams, in: .query)
+        resolved.formFields = rows(request.formFields, in: .form)
         resolved.fileFields = request.fileFields.map { field in
-            FileField(id: field.id, isEnabled: field.isEnabled, name: apply(field.name), path: apply(field.path))
+            var field = field
+            field.name = apply(field.name, at: .row(.files, field.id, .name))
+            field.path = apply(field.path, at: .row(.files, field.id, .value))
+            return field
         }
-        resolved.binaryFilePath = apply(request.binaryFilePath)
-        resolved.binaryContentType = apply(request.binaryContentType)
-        resolved.cookies = request.cookies.map { item in
-            KeyValueItem(id: item.id, isEnabled: item.isEnabled, key: apply(item.key), value: apply(item.value))
-        }
-        // 路径参数名来自 URL，不参与替换；值可以写 {{变量}}。
-        resolved.pathParams = request.pathParams.map { item in
-            KeyValueItem(id: item.id, isEnabled: item.isEnabled, key: item.key, value: apply(item.value))
+        resolved.binaryFilePath = apply(request.binaryFilePath, at: .binaryPath)
+        resolved.binaryContentType = apply(request.binaryContentType, at: .binaryContentType)
+        resolved.cookies = rows(request.cookies, in: .cookies)
+        resolved.pathParams = rows(request.pathParams, in: .path)
+        resolved.auth.bearerToken = apply(request.auth.bearerToken, at: .bearerToken)
+        resolved.auth.username = apply(request.auth.username, at: .username)
+        resolved.auth.password = apply(request.auth.password, at: .password)
+        resolved.auth.apiKeyName = apply(request.auth.apiKeyName, at: .apiKeyName)
+        resolved.auth.apiKeyValue = apply(request.auth.apiKeyValue, at: .apiKeyValue)
+
+        guard !missingVariables.isEmpty else { return Resolution(request: resolved, missingVariables: []) }
+        let activeFields = activeFields(in: resolved)
+        return Resolution(
+            request: resolved,
+            missingVariables: missingVariables.filter { activeFields.contains($0.field) }
+        )
+    }
+
+    private static func activeFields(in request: APIRequest) -> Set<RequestVariableField> {
+        var fields: Set<RequestVariableField> = [.url]
+
+        func addRows(_ items: [KeyValueItem], in table: RequestVariableField.Table) {
+            for item in items where item.isEnabled && !item.key.isEmpty {
+                fields.insert(.row(table, item.id, .name))
+                fields.insert(.row(table, item.id, .value))
+            }
         }
 
-        // 认证字段也走同一套替换：`{{token}}` 放进环境变量是这类配置最常见的用法。
-        resolved.auth.bearerToken = apply(request.auth.bearerToken)
-        resolved.auth.username = apply(request.auth.username)
-        resolved.auth.password = apply(request.auth.password)
-        resolved.auth.apiKeyName = apply(request.auth.apiKeyName)
-        resolved.auth.apiKeyValue = apply(request.auth.apiKeyValue)
+        // URLRequest 对同名头采用最后一条启用值。路径参数则取实际使用的第一条。
+        var headerNames = Set<String>()
+        let headers = request.headers.reversed().filter {
+            $0.isEnabled && !$0.key.isEmpty && headerNames.insert($0.key.lowercased()).inserted
+        }
+        addRows(headers, in: .headers)
+        addRows(request.queryParams, in: .query)
+        if !headerNames.contains("cookie") { addRows(request.cookies, in: .cookies) }
 
-        return (resolved, unresolved.sorted())
+        let pathNames = Set(PathParams.placeholders(in: request.url))
+        var seenPaths = Set<String>()
+        for item in request.pathParams where item.isEnabled && pathNames.contains(item.key) && seenPaths.insert(item.key).inserted {
+            fields.insert(.row(.path, item.id, .value))
+        }
+
+        switch request.bodyKind {
+        case .none:
+            break
+        case .json, .rawText:
+            fields.insert(.body)
+            if request.bodyKind == .rawText && !headerNames.contains("content-type") {
+                fields.insert(.rawContentType)
+            }
+        case .formURLEncoded, .multipart:
+            addRows(request.formFields, in: .form)
+            if request.bodyKind == .multipart {
+                for file in request.fileFields where file.isEnabled && !file.name.isEmpty {
+                    fields.insert(.row(.files, file.id, .name))
+                    fields.insert(.row(.files, file.id, .value))
+                }
+            }
+        case .binary:
+            fields.insert(.binaryPath)
+            if !headerNames.contains("content-type") { fields.insert(.binaryContentType) }
+        }
+
+        guard request.auth.isConfigured else { return fields }
+        switch request.auth.kind {
+        case .none: break
+        case .bearer: fields.insert(.bearerToken)
+        case .basic: fields.formUnion([.username, .password])
+        case .apiKey: fields.formUnion([.apiKeyName, .apiKeyValue])
+        }
+        return fields
     }
 }

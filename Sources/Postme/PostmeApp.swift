@@ -142,6 +142,14 @@ struct PostmeApp: App {
                 Button(app.t(.menuFindInResponse)) { app.requestResponseFind() }
                     .keyboardShortcut("f", modifiers: [.command, .option])
             }
+
+            CommandGroup(after: .windowArrangement) {
+                Button(app.t(.menuPreviousTab)) { app.activateAdjacentTab(forward: false) }
+                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+
+                Button(app.t(.menuNextTab)) { app.activateAdjacentTab(forward: true) }
+                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+            }
         }
 
         Settings {

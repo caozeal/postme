@@ -8,14 +8,6 @@ struct SettingsView: View {
         let settings = app.bindingForSettings()
 
         Form {
-            Section("Agent context / Agent 上下文") {
-                Toggle("Enable for this session / 本次会话启用", isOn: Binding(
-                    get: { app.agentContextEnabled }, set: { app.setAgentContextEnabled($0) }))
-                Text("Read-only access for local processes running as you. Selected request names/IDs, status and bounded JSON results are shared. Strings and credentials are withheld, but numeric data may still be sensitive. Connected agents may send data to their model provider. Disabled on restart. / 只读共享当前接口名称/ID、状态与有限 JSON 结果；字符串和凭据不共享，数值仍可能敏感。Agent 可能将数据发送给模型服务。重启后关闭。")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                if let error = app.agentContextError { Text(error).foregroundStyle(.red) }
-            }
-
             Section(app.t(.settingsLanguageSection)) {
                 Picker(app.t(.settingsLanguageLabel), selection: languageBinding) {
                     Text(app.t(.settingsLanguageSystem)).tag(AppLanguage?.none)
@@ -53,6 +45,19 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section(app.t(.settingsAgentContextSection)) {
+                Toggle(app.t(.settingsAgentContextEnabled), isOn: Binding(
+                    get: { app.agentContextEnabled }, set: { app.setAgentContextEnabled($0) }))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(app.t(.settingsAgentContextLifecycle))
+                    Text(app.t(.settingsAgentContextScope))
+                    Text(app.t(.settingsAgentContextPrivacy))
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                if let error = app.agentContextError { Text(error).foregroundStyle(.red) }
+            }
+
             Section(app.t(.settingsStorageSection)) {
                 HStack(alignment: .top) {
                     Text(app.t(.settingsWorkspaceFile))
@@ -80,6 +85,8 @@ struct SettingsView: View {
                 shortcutRow(app.t(.settingsShortcutSend), "⌘ ↩")
                 shortcutRow(app.t(.settingsShortcutSave), "⌘ S")
                 shortcutRow(app.t(.settingsShortcutNewRequest), "⌘ N")
+                shortcutRow(app.t(.menuPreviousTab), "⌥ ⌘ ←")
+                shortcutRow(app.t(.menuNextTab), "⌥ ⌘ →")
                 shortcutRow(app.t(.settingsShortcutSearch), "⌘ F")
                 shortcutRow(app.t(.menuFindInResponse), "⌥ ⌘ F")
                 shortcutRow(app.t(.settingsShortcutImport), "⌘ ⇧ I")
@@ -115,7 +122,7 @@ struct SettingsView: View {
                     Button {
                         app.removeLLMCustomPath(path)
                     } label: {
-                        Image(systemName: "trash")
+                        Image(icon: .delete)
                             .font(.system(size: 11))
                     }
                     .buttonStyle(.borderless)

@@ -86,6 +86,39 @@ final class VariableResolverTests: XCTestCase {
         XCTAssertEqual(resolved.request.formFields.first?.key, "abc123")
         XCTAssertEqual(resolved.request.formFields.first?.value, "abc123")
     }
+
+    func testMissingVariablesPointToEffectiveFieldsAndSkipInactiveValues() {
+        let overwrittenHeader = KeyValueItem(key: "X-Trace", value: "{{overwritten}}")
+        let header = KeyValueItem(key: "x-trace", value: "{{trace}}")
+        let query = KeyValueItem(key: "{{queryName}}", value: "{{queryValue}}/{{queryValue}}")
+        let path = KeyValueItem(key: "id", value: "{{path}}")
+        var request = APIRequest(url: "{{baseUrl}}/items/{id}")
+        request.headers = [overwrittenHeader, header, KeyValueItem(key: "Content-Type", value: "text/plain")]
+        request.queryParams = [query,
+                               KeyValueItem(isEnabled: false, key: "{{disabledKey}}", value: "{{disabledValue}}"),
+                               KeyValueItem(key: "{{empty}}", value: "{{ignored}}")]
+        request.pathParams = [path, KeyValueItem(key: "id", value: "{{duplicatePath}}"),
+                              KeyValueItem(key: "stale", value: "{{stalePath}}")]
+        request.bodyKind = .rawText
+        request.bodyText = "{{body}}"
+        request.rawContentType = "{{overriddenType}}"
+        request.formFields = [KeyValueItem(key: "{{form}}")]
+        request.fileFields = [FileField(name: "file", path: "{{multipartFile}}")]
+        request.binaryFilePath = "{{binaryFile}}"
+        request.auth = RequestAuth(kind: .basic, bearerToken: "{{oldToken}}", username: "{{user}}")
+
+        let result = VariableResolver.resolve(request, variables: env.merging(["empty": ""]) { _, new in new })
+        XCTAssertEqual(Set(result.missingVariables), Set([
+            MissingRequestVariable(name: "trace", field: .row(.headers, header.id, .value)),
+            MissingRequestVariable(name: "queryName", field: .row(.query, query.id, .name)),
+            MissingRequestVariable(name: "queryValue", field: .row(.query, query.id, .value)),
+            MissingRequestVariable(name: "path", field: .row(.path, path.id, .value)),
+            MissingRequestVariable(name: "body", field: .body),
+            MissingRequestVariable(name: "user", field: .username)
+        ]))
+        XCTAssertEqual(result.missingVariables.count, 6)
+        XCTAssertEqual(result.request.queryParams[0].value, "{{queryValue}}/{{queryValue}}")
+    }
 }
 
 final class JSONToolsTests: XCTestCase {
@@ -106,6 +139,14 @@ final class JSONToolsTests: XCTestCase {
 
     func testEmptyInputRejected() {
         XCTAssertFalse(JSONTools.isValid("   "))
+    }
+
+    func testFormatsTopLevelJSONValues() {
+        for value in ["42", "true", "null", #""example""#] {
+            XCTAssertTrue(JSONTools.isValid(value))
+            XCTAssertEqual(JSONTools.pretty(value), value)
+            XCTAssertEqual(JSONTools.minify("  \(value)  "), value)
+        }
     }
 }
 

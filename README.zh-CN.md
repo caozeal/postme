@@ -10,6 +10,8 @@
 
 ![postme 界面](docs/screenshot.png)
 
+[图标设计规范](docs/ICON_STYLE.md)
+
 ---
 
 ## 为什么会有这个项目
@@ -593,14 +595,14 @@ skills/postme/SKILL.md       agent 技能：给 AI agent 看的 CLI 用法（不
 
 ### Agent 感知当前界面（只读预览版）
 
-打开 GUI 的「设置 → Agent context」，明确启用本次会话访问，然后运行：
+GUI 启动时默认开启 Agent context；如果在「设置 → Agent context」手动关闭，请重新开启后再运行：
 
 ```bash
 build/postme context current --json
 ```
 
 CLI 直接读取 GUI 内存中的选中页签、请求名称/ID、环境、运行状态与有限结果，
-不从历史记录推测当前界面，不发送请求，不修改工作区。关闭开关即时撤销，重启默认关闭。
+不从历史记录推测当前界面，不发送请求，不修改工作区。关闭开关即时撤销；每次 GUI 启动会重新默认开启。
 同一系统用户下的本地进程可以访问该接口；连接的编码 Agent 可能把结果发给其模型服务。
 
 `sessionID`、`tabID`、`runID` 标识会话/页签/执行，`draftChangedSinceRun` 和
@@ -610,4 +612,4 @@ CLI 直接读取 GUI 内存中的选中页签、请求名称/ID、环境、运�
 目前返回状态码、耗时、最大 32 KiB 输入的脱敏 JSON 结构/数字/布尔值，SSE 仅返回计数。
 自由文本、正文字符串、原始 URL、Header 值、错误正文不会返回；未开放原文绕过。
 JSON 导出有深度/条目限制，`exportMayBeIncomplete` 提醒内容不能视为完整证据。
-名称会去除已知环境/认证值，但不能保证任意字段都无敏感信息；仅在信任 Agent 时开启。
+名称会去除已知环境/认证值，但不能保证任意字段都无敏感信息；不信任连接的 Agent 时请关闭该开关。

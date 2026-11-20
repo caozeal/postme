@@ -10,14 +10,20 @@ struct EditorTabBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(app.tabs) { tab in
-                        tabItem(tab)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        ForEach(app.tabs) { tab in
+                            tabItem(tab)
+                                .id(tab.id)
+                        }
                     }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
+                .onChange(of: app.activeTabID, initial: true) { _, id in
+                    proxy.scrollTo(id)
+                }
             }
             newTabButton
         }
@@ -26,26 +32,44 @@ struct EditorTabBar: View {
 
     private func tabItem(_ tab: EditorTab) -> some View {
         let isActive = tab.id == app.activeTabID
-        return HStack(spacing: 5) {
-            stateIcon(tab)
-            Text(app.tabTitle(tab))
-                .font(.system(size: 11.5))
-                .lineLimit(1)
-                // 页签宽度有上限：长名字不许把别的页签挤出可视区。
-                .frame(maxWidth: 160, alignment: .leading)
+        let title = app.tabTitle(tab)
+        return HStack(spacing: 2) {
+            Button {
+                app.activateTab(id: tab.id)
+            } label: {
+                HStack(spacing: 5) {
+                    stateIcon(tab)
+                        .frame(width: 12)
+                        .accessibilityHidden(true)
+                    Text(title)
+                        .font(.system(size: 11.5))
+                        .lineLimit(1)
+                        .frame(maxWidth: 160, alignment: .leading)
+                }
+                .padding(.leading, 8)
+                .padding(.trailing, 3)
+                .frame(minHeight: 24)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(isActive ? .isSelected : [])
+            .accessibilityValue(tabAccessibilityStatus(tab))
+            .help(title)
+
             Button {
                 app.requestCloseTab(id: tab.id)
             } label: {
-                Image(systemName: "xmark")
+                Image(icon: .close)
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(app.t(.tabCloseNamed, title))
             .help(app.t(.tabCloseHelp))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.trailing, 2)
         .background(
             RoundedRectangle(cornerRadius: 5)
                 .fill(isActive ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.22)
@@ -54,11 +78,8 @@ struct EditorTabBar: View {
         .overlay(
             RoundedRectangle(cornerRadius: 5)
                 .stroke(isActive ? Color.accentColor.opacity(0.55) : Color.clear, lineWidth: 1)
+                .allowsHitTesting(false)
         )
-        // 点击整格切换；× 按钮自己吃掉点击（SwiftUI 先命中内层控件）。
-        .contentShape(Rectangle())
-        .onTapGesture { app.activateTab(id: tab.id) }
-        .help(app.tabTitle(tab))
         // 关闭类操作的快捷入口：右键哪一格，「关闭其他」就保留哪一格。
         .contextMenu {
             Button(app.t(.tabMenuDuplicate)) {
@@ -78,6 +99,11 @@ struct EditorTabBar: View {
         }
     }
 
+    private func tabAccessibilityStatus(_ tab: EditorTab) -> String {
+        if tab.isSending { return app.t(.sendingProgress) }
+        return tab.isDirty ? app.t(.tabUnsavedAccessibility) : ""
+    }
+
     /// 运行期状态图标：在飞 > 未保存 > 无。三者互斥，同一位子上只出现一个。
     @ViewBuilder
     private func stateIcon(_ tab: EditorTab) -> some View {
@@ -88,9 +114,9 @@ struct EditorTabBar: View {
                 .fill(Color.accentColor)
                 .frame(width: 6, height: 6)
         } else {
-            Image(systemName: "doc.text")
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
+            Image(icon: .request)
+                .font(.system(size: 10))
+                .foregroundStyle(tab.id == app.activeTabID ? BrandColor.icon : Color.secondary)
         }
     }
 
@@ -102,13 +128,15 @@ struct EditorTabBar: View {
             Button(app.t(.tabNewMenuNewRequest)) { app.newRequest() }
             Button(app.t(.tabNewMenuImportCurl)) { app.showCurlImport = true }
         } label: {
-            Image(systemName: "plus")
+            Image(icon: .add)
                 .font(.system(size: 10, weight: .semibold))
+                .frame(width: 22, height: 24)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 4)
+        .accessibilityLabel(app.t(.tabNewMenuHelp))
         .help(app.t(.tabNewMenuHelp))
     }
 }

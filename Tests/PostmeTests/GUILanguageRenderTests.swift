@@ -27,7 +27,7 @@ final class GUILanguageRenderTests: XCTestCase {
     /// 会渲染成空白——那样的"没文字"是测量工具的问题，不是界面的问题。
     /// 也不用 `cacheDisplay`：它只画进 backing store，跨进程合成的内容（Picker 弹出层、
     /// 侧栏材质）抓不到。窗口级截屏才是用户真正看到的东西。
-    private func render<V: View>(_ view: V, size: CGSize, to path: String) throws {
+    private func render<V: View>(_ view: V, size: CGSize, to path: String, scrollFraction: CGFloat? = nil) throws {
         let hosting = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         hosting.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(
@@ -39,6 +39,17 @@ final class GUILanguageRenderTests: XCTestCase {
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
         pump(1.0)
+
+        if let scrollFraction {
+            let scroll = try XCTUnwrap(firstScrollView(in: hosting))
+            let document = try XCTUnwrap(scroll.documentView)
+            let clip = scroll.contentView
+            let travel = max(0, document.bounds.height - clip.bounds.height)
+            let y = travel * (document.isFlipped ? scrollFraction : 1 - scrollFraction)
+            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+            scroll.reflectScrolledClipView(clip)
+            pump(0.3)
+        }
 
         let shot = Process()
         shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -52,6 +63,11 @@ final class GUILanguageRenderTests: XCTestCase {
         guard FileManager.default.fileExists(atPath: path) else {
             throw XCTSkip("窗口截屏失败: \(path)")
         }
+    }
+
+    private func firstScrollView(in view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView { return scroll }
+        return view.subviews.lazy.compactMap { self.firstScrollView(in: $0) }.first
     }
 
     /// Vision 读出的文字 + 归一化坐标（原点在左下角）。
@@ -78,15 +94,15 @@ final class GUILanguageRenderTests: XCTestCase {
     }
 
     /// 用 Vision 读渲染结果里的文字——这是"用户实际看到什么"的机器可读版本。
-    private func ocr(_ path: String) throws -> String {
+    private func ocr(_ path: String, prefersEnglish: Bool = false) throws -> String {
         guard let image = NSImage(contentsOfFile: path),
               let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             throw XCTSkip("无法读取截图: \(path)")
         }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["zh-Hans", "en-US"]
-        request.usesLanguageCorrection = false
+        request.recognitionLanguages = prefersEnglish ? ["en-US", "zh-Hans"] : ["zh-Hans", "en-US"]
+        request.usesLanguageCorrection = prefersEnglish
         try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
@@ -122,6 +138,8 @@ final class GUILanguageRenderTests: XCTestCase {
                    to: shot("sidebar-zh.png"))
 
         let settingsZh = try ocr(shot("settings-zh.png"))
+        XCTAssertTrue(settingsZh.contains("Agent 上下文"), "Agent context 分区应为中文: \(settingsZh)")
+        XCTAssertFalse(settingsZh.contains("Enable Agent context"), "中文界面不应残留英文 Agent context 开关")
         XCTAssertTrue(settingsZh.contains("界面语言"), "设置面板中文: \(settingsZh)")
         // Picker 收起时只显示当前选中值(选项在弹出层里),所以断言可见的选中值。
         XCTAssertTrue(settingsZh.contains("简体中文"), "中文界面选中值应为简体中文: \(settingsZh)")
@@ -145,7 +163,9 @@ final class GUILanguageRenderTests: XCTestCase {
         try render(SidebarView().environment(app), size: CGSize(width: 300, height: 700),
                    to: shot("sidebar-en.png"))
 
-        let settingsEn = try ocr(shot("settings-en.png"))
+        let settingsEn = try ocr(shot("settings-en.png"), prefersEnglish: true)
+        XCTAssertTrue(settingsEn.contains("Agent context"), "Agent context 分区应为英文: \(settingsEn)")
+        XCTAssertFalse(settingsEn.contains("Agent 上下文"), "英文界面不应残留中文 Agent context 分区")
         XCTAssertTrue(settingsEn.contains("Interface language"), "设置面板英文: \(settingsEn)")
         XCTAssertTrue(settingsEn.contains("English"), "英文界面选中值应为 English: \(settingsEn)")
         XCTAssertTrue(settingsEn.contains("Timeout"), "其它分区也应英文: \(settingsEn)")
@@ -154,7 +174,7 @@ final class GUILanguageRenderTests: XCTestCase {
         XCTAssertFalse(settingsEn.contains("界面语言"), "英文界面不应残留中文标签")
         XCTAssertFalse(settingsEn.contains("超时时间"), "英文界面不应残留中文标签")
 
-        let editorEn = try ocr(shot("editor-en.png"))
+        let editorEn = try ocr(shot("editor-en.png"), prefersEnglish: true)
         XCTAssertTrue(editorEn.contains("Send"), "英文按钮: \(editorEn)")
         XCTAssertTrue(editorEn.contains("Save"), "英文保存按钮: \(editorEn)")
         XCTAssertTrue(editorEn.contains("Parameter name"), "英文占位符: \(editorEn)")
@@ -446,6 +466,7 @@ final class GUILanguageRenderTests: XCTestCase {
 
         // 前置条件：状态层确实拼好了。
         XCTAssertEqual(app.activeTab.stream.llm.fields.first?.text, pieces.joined(), "前置条件：拼接文本应完整")
+        XCTAssertEqual(app.activeTab.stream.llm.format, .openAI)
         XCTAssertEqual(app.responseSection, .events, "默认落点仍是事件分页")
 
         app.responseSection = .llm
@@ -455,7 +476,8 @@ final class GUILanguageRenderTests: XCTestCase {
         XCTAssertTrue(zh.contains("事件"), "事件分页应仍在: \(zh)")
         XCTAssertTrue(zh.contains("大模型"), "拼接文本必须真的画在主区域: \(zh)")
         XCTAssertTrue(zh.contains("验证通过"), "拼接文本尾部也应可见: \(zh)")
-        XCTAssertTrue(zh.contains("OpenAI"), "格式标识应显示: \(zh)")
+        // 混合中英文截图里，Vision 偶尔把末尾大写 I 识别成小写 l。
+        XCTAssertTrue(zh.contains("OpenAI") || zh.contains("OpenAl"), "格式标识应显示: \(zh)")
 
         // 英文界面：文案跟着变，拼接内容（用户数据）不变。
         app.setLanguage(.en)
@@ -482,16 +504,20 @@ final class GUILanguageRenderTests: XCTestCase {
         XCTAssertFalse(plain.contains("大模型输出"), "非 SSE 响应不应显示该分页: \(plain)")
         XCTAssertFalse(plain.contains("验证通过"), "非 SSE 响应不应残留拼接文本: \(plain)")
 
-        // 设置页的新分区：标题、说明与已保存路径都要画出来，且不得把既有分区挤出可视区。
+        // 设置首屏优先显示常用请求选项。滚动后核对大模型字段路径。
         XCTAssertTrue(app.addLLMCustomPath("choices[0].delta.custom"))
         try render(SettingsView().environment(app), size: CGSize(width: 480, height: 700),
-                   to: shot("settings-llm-zh.png"))
+                   to: shot("settings-top-zh.png"))
+        let settingsTop = try ocr(shot("settings-top-zh.png"))
+        XCTAssertTrue(settingsTop.contains("超时时间"), "首屏应显示超时时间: \(settingsTop)")
+        XCTAssertTrue(settingsTop.contains("证书校验"), "首屏应显示证书开关: \(settingsTop)")
+
+        try render(SettingsView().environment(app), size: CGSize(width: 480, height: 700),
+                   to: shot("settings-llm-zh.png"), scrollFraction: 0.6)
         let settingsZh = try ocr(shot("settings-llm-zh.png"))
         XCTAssertTrue(settingsZh.contains("大模型输出字段路径"), "设置页应有该分区: \(settingsZh)")
         // OCR 会把 `[0]` 读成全角括号，只断言不会被误读的那半截。
         XCTAssertTrue(settingsZh.contains("delta.custom"), "已保存路径应列出: \(settingsZh)")
-        XCTAssertTrue(settingsZh.contains("超时时间"), "既有分区不得被挤掉: \(settingsZh)")
-        XCTAssertTrue(settingsZh.contains("证书校验"), "既有证书开关不得被挤掉: \(settingsZh)")
     }
 
     /// LangGraph 形状：整份快照重复推送，界面必须显示「LangChain」格式且文本只出现一次。

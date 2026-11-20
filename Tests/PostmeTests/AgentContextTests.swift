@@ -18,11 +18,14 @@ final class AgentContextTests: XCTestCase {
     func testLongSocketPathFails() {
         XCTAssertThrowsError(try AgentContextBridge.address(String(repeating: "a", count: 110)))
     }
-    @MainActor func testDefaultDisabledAndNoStaleRunOnRestore() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    @MainActor func testLaunchEnablesContextAndNoStaleRunOnRestore() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ctx-" + UUID().uuidString.prefix(8))
         defer { try? FileManager.default.removeItem(at: directory) }
-        let app = AppState(persistence: PersistenceService(directory: directory))
-        XCTAssertFalse(app.agentContextEnabled)
+        let app = AppState(persistence: PersistenceService(directory: directory), enableAgentContextOnLaunch: true)
+        defer { app.setAgentContextEnabled(false) }
+        XCTAssertTrue(app.agentContextEnabled)
+        let data = try await Task.detached { try AgentContextBridge.read(directory: directory) }.value
+        XCTAssertEqual(try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])["state"] as? String, "not_run")
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: app.agentContextData()) as? [String: Any])
         XCTAssertEqual(object["state"] as? String, "not_run")
         XCTAssertTrue(object["runID"] is NSNull)

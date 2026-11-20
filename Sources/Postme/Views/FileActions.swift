@@ -4,11 +4,12 @@ import UniformTypeIdentifiers
 /// 文件级操作：导入 / 导出 Postman 集合。
 enum FileActions {
 
-    /// 写剪贴板（唯一实现：请求栏按钮、侧栏右键、菜单三处共用）。
-    @MainActor
-    static func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    /// 复制按钮和菜单共用的剪贴板写入入口。
+    @MainActor @discardableResult
+    static func copyToPasteboard(_ text: String) -> Bool {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.setString(text, forType: .string)
     }
 
     /// 把请求复制成 curl 命令。

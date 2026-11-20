@@ -3,6 +3,7 @@ import SwiftUI
 /// OpenAPI / Swagger 导入预览：先看清楚接口数、目录数和提示，再决定落点。
 struct OpenAPIImportSheet: View {
     @Environment(AppState.self) private var app
+    private static let maximumWarningHeight: CGFloat = 150
 
     var body: some View {
         @Bindable var app = app
@@ -17,7 +18,7 @@ struct OpenAPIImportSheet: View {
                     Divider()
                     footer
                 }
-                .frame(width: 640, height: 500)
+                .frame(width: 640)
             }
         }
     }
@@ -36,7 +37,7 @@ struct OpenAPIImportSheet: View {
             }
 
             HStack(spacing: 6) {
-                Image(systemName: "doc.text")
+                Image(icon: .apiSpecification)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Text(preview.fileName)
@@ -97,7 +98,7 @@ struct OpenAPIImportSheet: View {
 
     private func hint(_ text: String) -> some View {
         HStack(spacing: 5) {
-            Image(systemName: "info.circle")
+            Image(icon: .info)
                 .font(.system(size: 9))
             Text(text)
             Spacer()
@@ -112,34 +113,50 @@ struct OpenAPIImportSheet: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            if preview.result.warnings.isEmpty {
+            let warnings = preview.result.warnings
+            if warnings.isEmpty {
                 Text(app.t(.openAPIWarningsNone))
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
-                Spacer(minLength: 0)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 5) {
-                        ForEach(Array(preview.result.warnings.enumerated()), id: \.offset) { _, warning in
-                            HStack(alignment: .top, spacing: 6) {
-                                Text("•")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                Text(warning)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .textSelection(.enabled)
-                                Spacer(minLength: 0)
-                            }
-                        }
+            } else if warnings.count < 12 {
+                WarningListLayout(maximumHeight: Self.maximumWarningHeight) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        warningRows(warnings)
                     }
+                    .hidden()
+                    .accessibilityHidden(true)
+                    scrollableWarnings(warnings)
                 }
-                .frame(maxHeight: 150)
+            } else {
+                // 长列表直接进入滚动区，避免为测量而构建所有提示。
+                scrollableWarnings(warnings)
+                    .frame(height: Self.maximumWarningHeight)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private func scrollableWarnings(_ warnings: [String]) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 5) {
+                warningRows(warnings)
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private func warningRows(_ warnings: [String]) -> some View {
+        ForEach(warnings.indices, id: \.self) { index in
+            HStack(alignment: .top, spacing: 6) {
+                Text("•").accessibilityHidden(true)
+                Text(warnings[index])
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+        }
     }
 
     private var footer: some View {
@@ -159,5 +176,19 @@ struct OpenAPIImportSheet: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+}
+
+/// ScrollView 的理想高度与内容无关，单独测量短列表，让弹窗正确计算初始高度。
+private struct WarningListLayout: Layout {
+    let maximumHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let content = subviews[0].sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? content.width, height: min(content.height, maximumHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews[1].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
     }
 }

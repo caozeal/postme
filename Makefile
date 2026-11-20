@@ -24,7 +24,9 @@ cli: build
 	@echo "CLI ready: $(BUILD_DIR)/postme --help"
 
 icon:
-	swift scripts/render_icon.swift
+	@mkdir -p $(BUILD_DIR)
+	swiftc scripts/render_icon.swift Sources/Postme/Components/PostmePlane.swift -o $(BUILD_DIR)/render-icon
+	$(BUILD_DIR)/render-icon
 	iconutil -c icns build/AppIcon.iconset -o Resources/AppIcon.icns
 
 test:

@@ -97,7 +97,7 @@ struct CurlImportSheet: View {
 
         case .failure(let error):
             HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
+                Image(icon: .warning)
                     .foregroundStyle(.orange)
                 Text(localizedMessage(for: error))
                     .font(.system(size: 11))

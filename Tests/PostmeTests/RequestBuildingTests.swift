@@ -32,6 +32,55 @@ final class RequestBuildingTests: XCTestCase {
 
     // MARK: - URLRequest 组装
 
+    @MainActor
+    func testTargetPreviewAndWarningsUpdateBeforeSending() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let app = AppState(persistence: PersistenceService(directory: directory))
+        app.draft.url = "{{baseURL}}/items/{id}"
+        let unresolved = app.preparedDraft
+        XCTAssertEqual(unresolved.unresolved, ["baseURL"])
+        XCTAssertEqual(unresolved.unresolvedPathParams, ["id"])
+        XCTAssertNil(RequestEditorView.destination(in: RequestExecutor.previewURL(unresolved.request)))
+
+        let id = app.addEnvironment(name: "Local")
+        app.updateEnvironment(APIEnvironment(id: id, name: "Local", variables: [
+            KeyValueItem(key: "baseURL", value: "https://user:token@[::1]:8443")
+        ]))
+        app.selectEnvironment(id: id)
+        app.draft.pathParams = [KeyValueItem(key: "id", value: "42")]
+        app.draft.queryParams = [KeyValueItem(key: "api_key", value: "query-secret")]
+        let resolved = app.preparedDraft
+        let previewURL = RequestExecutor.previewURL(resolved.request)
+        XCTAssertTrue(resolved.unresolved.isEmpty)
+        XCTAssertTrue(resolved.unresolvedPathParams.isEmpty)
+        XCTAssertEqual(RequestEditorView.destination(in: previewURL), "https://[::1]:8443")
+        let request = try RequestExecutor.buildURLRequest(resolved.request, options: opts)
+        XCTAssertEqual(previewURL, request.url?.absoluteString)
+    }
+
+    @MainActor
+    func testPreviewFiltersVariablesFromOverriddenAuthAndCookies() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let app = AppState(persistence: PersistenceService(directory: directory))
+        app.draft.url = "https://example.test/items"
+        app.draft.bodyKind = .rawText
+        app.draft.rawContentType = "{{oldType}}"
+        app.draft.auth = RequestAuth(kind: .apiKey, apiKeyName: "Content-Type", apiKeyValue: "{{liveType}}")
+        let cookie = KeyValueItem(key: "sid", value: "{{liveCookie}}")
+        app.draft.cookies = [cookie]
+
+        XCTAssertEqual(Set(app.preparedDraft.missingVariables), Set([
+            MissingRequestVariable(name: "liveType", field: .apiKeyValue),
+            MissingRequestVariable(name: "liveCookie", field: .row(.cookies, cookie.id, .value))
+        ]))
+        app.draft.headers = [KeyValueItem(key: "Content-Type", value: "text/plain"),
+                             KeyValueItem(key: "Cookie", value: "sid=explicit")]
+        XCTAssertTrue(app.preparedDraft.missingVariables.isEmpty)
+        XCTAssertEqual(app.preparedDraft.request.headers.map(\.value), ["text/plain", "sid=explicit"])
+    }
+
     func testQueryPlusIsEncodedOnTheWire() throws {
         var req = APIRequest()
         req.url = "https://api.demo.com/x"

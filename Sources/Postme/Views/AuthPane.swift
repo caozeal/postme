@@ -7,12 +7,20 @@ import SwiftUI
 struct AuthPane: View {
     let l10n: Localizer
     @Binding var auth: RequestAuth
+    let resolvedAuth: RequestAuth
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    typeRow
+                    VStack(alignment: .leading, spacing: 7) {
+                        typeRow
+                        if let missingCredentialsHint {
+                            Label(l10n(missingCredentialsHint), icon: .warning)
+                                .font(.system(size: 11))
+                                .foregroundStyle(statusTint(for: 400))
+                        }
+                    }
                     Divider()
                     fields
                 }
@@ -20,8 +28,10 @@ struct AuthPane: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Divider()
-            hint
+            if auth.kind != .none {
+                Divider()
+                hint
+            }
         }
     }
 
@@ -31,7 +41,7 @@ struct AuthPane: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            Picker("", selection: $auth.kind) {
+            Picker(l10n(.authKindLabel), selection: $auth.kind) {
                 ForEach(AuthKind.allCases) { kind in
                     Text(kind.displayName(l10n)).tag(kind)
                 }
@@ -41,6 +51,18 @@ struct AuthPane: View {
             .frame(width: 200)
 
             Spacer()
+        }
+    }
+
+    private var missingCredentialsHint: L10nKey? {
+        guard !resolvedAuth.isConfigured else { return nil }
+        switch resolvedAuth.kind {
+        case .none: return nil
+        case .bearer: return .authMissingBearerToken
+        case .basic: return .authMissingBasicCredentials
+        case .apiKey:
+            return resolvedAuth.apiKeyName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .authMissingAPIKeyName : .authMissingAPIKeyValue
         }
     }
 
@@ -58,6 +80,7 @@ struct AuthPane: View {
                 l10n: l10n,
                 label: l10n(.authBearerTokenLabel),
                 placeholder: l10n(.authBearerTokenPlaceholder),
+                field: .bearerToken,
                 text: $auth.bearerToken
             )
 
@@ -66,12 +89,14 @@ struct AuthPane: View {
                 LabeledField(
                     label: l10n(.authUsernameLabel),
                     placeholder: l10n(.authUsernamePlaceholder),
+                    field: .username,
                     text: $auth.username
                 )
                 SecretField(
                     l10n: l10n,
                     label: l10n(.authPasswordLabel),
                     placeholder: l10n(.authPasswordPlaceholder),
+                    field: .password,
                     text: $auth.password
                 )
             }
@@ -81,12 +106,14 @@ struct AuthPane: View {
                 LabeledField(
                     label: l10n(.authAPIKeyNameLabel),
                     placeholder: l10n(.authAPIKeyNamePlaceholder),
+                    field: .apiKeyName,
                     text: $auth.apiKeyName
                 )
                 SecretField(
                     l10n: l10n,
                     label: l10n(.authAPIKeyValueLabel),
                     placeholder: l10n(.authAPIKeyValuePlaceholder),
+                    field: .apiKeyValue,
                     text: $auth.apiKeyValue
                 )
 
@@ -109,7 +136,7 @@ struct AuthPane: View {
 
     private var hint: some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "info.circle")
+            Image(icon: .info)
             Text(l10n(.authHint))
             Spacer()
         }
@@ -126,6 +153,7 @@ struct AuthPane: View {
 private struct LabeledField: View {
     let label: String
     let placeholder: String
+    let field: RequestVariableField
     @Binding var text: String
 
     var body: some View {
@@ -137,7 +165,9 @@ private struct LabeledField: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
                 .frame(maxWidth: 460)
+                .requestVariableField(field)
         }
+        .id(AnyHashable(field))
     }
 }
 
@@ -149,6 +179,7 @@ private struct SecretField: View {
     let l10n: Localizer
     let label: String
     let placeholder: String
+    let field: RequestVariableField
     @Binding var text: String
 
     @State private var revealed = false
@@ -169,11 +200,12 @@ private struct SecretField: View {
                 }
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
+                .requestVariableField(field)
 
                 Button {
                     revealed.toggle()
                 } label: {
-                    Image(systemName: revealed ? "eye.slash" : "eye")
+                    Image(icon: revealed ? .hide : .show)
                 }
                 .buttonStyle(.borderless)
                 .help(l10n(revealed ? .authHideSecretHelp : .authShowSecretHelp))
@@ -181,5 +213,6 @@ private struct SecretField: View {
             }
             .frame(maxWidth: 460)
         }
+        .id(AnyHashable(field))
     }
 }

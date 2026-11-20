@@ -15,19 +15,16 @@ struct EventsPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            Divider()
-
             if stream.events.isEmpty {
-                VStack {
-                    Spacer()
-                    Text(app.t(.streamEmptyHint))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                let waiting = stream.status == .streaming
+                ResponsePlaceholder(
+                    icon: waiting ? .receiving : .formattedResponse,
+                    title: app.t(waiting ? .streamWaitingForEvent : .streamNoEvents),
+                    hint: !waiting && !stream.rawText.isEmpty ? app.t(.streamRawBodyHint) : nil
+                )
             } else {
+                toolbar
+                Divider()
                 eventList
             }
         }
@@ -45,7 +42,7 @@ struct EventsPane: View {
             if stream.droppedEventCount > 0 {
                 Label(
                     app.t(.streamEventsDropped, stream.droppedEventCount),
-                    systemImage: "exclamationmark.triangle.fill"
+                    icon: .warning
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(.orange)
@@ -124,7 +121,7 @@ private struct EventRow: View {
                 }
 
                 if event.isUnterminated {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Image(icon: .warning)
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
                         .help(app.t(.streamEventUnterminated))
@@ -136,14 +133,10 @@ private struct EventRow: View {
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.tertiary)
 
-                Button {
-                    copyToClipboard(event.data)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 10))
-                }
+                CopyButton(title: app.t(.streamCopyEvent)) { event.data }
+                .labelStyle(.iconOnly)
+                .font(.system(size: 10))
                 .buttonStyle(.borderless)
-                .help(app.t(.streamCopyEvent))
             }
 
             Text(event.data)

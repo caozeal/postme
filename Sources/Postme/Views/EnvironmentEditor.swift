@@ -44,8 +44,7 @@ struct EnvironmentEditor: View {
             List(selection: $selectedID) {
                 ForEach(app.environments) { environment in
                     HStack(spacing: 6) {
-                        Image(systemName: app.workspace.activeEnvironmentID == environment.id
-                              ? "checkmark.circle.fill" : "circle")
+                        Image(icon: app.workspace.activeEnvironmentID == environment.id ? .completed : .pending)
                             .font(.system(size: 10))
                             .foregroundStyle(app.workspace.activeEnvironmentID == environment.id
                                              ? Color.accentColor : Color.secondary)
@@ -71,7 +70,7 @@ struct EnvironmentEditor: View {
                     let id = app.addEnvironment()
                     selectedID = id
                 } label: {
-                    Label(app.t(.newEnvironment), systemImage: "plus")
+                    Label(app.t(.newEnvironment), icon: .add)
                         .font(.system(size: 12))
                 }
                 .buttonStyle(.borderless)
@@ -79,7 +78,7 @@ struct EnvironmentEditor: View {
                 Button {
                     if let id = selectedID { cloneEnvironment(id: id) }
                 } label: {
-                    Label(app.t(.cloneEnvironment), systemImage: "plus.square.on.square")
+                    Label(app.t(.cloneEnvironment), icon: .duplicate)
                         .font(.system(size: 12))
                 }
                 .buttonStyle(.borderless)
@@ -110,7 +109,7 @@ struct EnvironmentEditor: View {
                         .frame(width: 220)
                     Spacer()
                     if app.workspace.activeEnvironmentID == id {
-                        Label(app.t(.currentEnvironment), systemImage: "checkmark.circle.fill")
+                        Label(app.t(.currentEnvironment), icon: .completed)
                             .font(.system(size: 11))
                             .foregroundStyle(Color.accentColor)
                     } else {

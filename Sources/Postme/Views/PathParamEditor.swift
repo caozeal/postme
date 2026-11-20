@@ -10,6 +10,7 @@ struct PathParamEditor: View {
     /// URL 当前实际包含的占位符名。模型里可能还留着「刚被删掉」的行，
     /// 它们不显示，但值会保留，补回占位符时还能继续用。
     let activeNames: Set<String>
+    let missingNames: Set<String>
 
     private let nameWidth: CGFloat = 150
 
@@ -24,7 +25,8 @@ struct PathParamEditor: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(visibleItems) { item in
-                        row(item: binding(for: item.id), id: item.id)
+                        row(item: binding(for: item.id))
+                            .id(AnyHashable(RequestVariableField.row(.path, item.id, .name)))
                         Divider()
                     }
                 }
@@ -52,7 +54,7 @@ struct PathParamEditor: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            Image(systemName: "info.circle")
+            Image(icon: .info)
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
                 .help(app.t(.pathParamsHint))
@@ -68,9 +70,11 @@ struct PathParamEditor: View {
         .padding(.vertical, 6)
     }
 
-    private func row(item: Binding<KeyValueItem>, id: UUID) -> some View {
-        HStack(spacing: 8) {
-            Text("{\(item.wrappedValue.key)}")
+    private func row(item: Binding<KeyValueItem>) -> some View {
+        let name = "{\(item.wrappedValue.key)}"
+        let missing = missingNames.contains(item.wrappedValue.key)
+        return HStack(spacing: 8) {
+            Text(name)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -80,12 +84,16 @@ struct PathParamEditor: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(name)
+                .accessibilityHint(missing ? app.t(.pathParamEmptyHelp) : "")
+                .requestVariableField(.row(.path, item.wrappedValue.id, .value))
 
-            if item.wrappedValue.value.isEmpty {
-                Image(systemName: "exclamationmark.triangle")
+            if missing {
+                Image(icon: .warning)
                     .font(.system(size: 10))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(statusTint(for: 400))
                     .help(app.t(.pathParamEmptyHelp))
+                    .accessibilityHidden(true)
             } else {
                 Color.clear.frame(width: 12, height: 12)
             }

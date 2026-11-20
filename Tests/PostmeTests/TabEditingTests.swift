@@ -60,6 +60,27 @@ final class TabEditingTests: XCTestCase {
 
     // MARK: - 各自独立
 
+    func testAdjacentTabNavigationWrapsAndKeepsUnsavedDraft() {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = app.activeTabID
+        app.activateAdjacentTab(forward: true)
+        XCTAssertEqual(app.activeTabID, first)
+
+        let second = app.newRequest()
+        app.draft.url = "https://unsaved.example"
+        let third = app.newRequest()
+
+        app.activateAdjacentTab(forward: true)
+        XCTAssertEqual(app.activeTabID, first)
+        app.activateAdjacentTab(forward: false)
+        XCTAssertEqual(app.activeTabID, third)
+        app.activateAdjacentTab(forward: false)
+        XCTAssertEqual(app.activeTabID, second)
+        XCTAssertEqual(app.draft.url, "https://unsaved.example")
+        XCTAssertTrue(app.isDraftDirty)
+    }
+
     func testSwitchingTabsKeepsEachDraft() {
         let (app, dir) = makeApp()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -6,6 +6,7 @@ struct CookiePane: View {
     @Environment(AppState.self) private var app
     let l10n: Localizer
     @Binding var cookies: [KeyValueItem]
+    @State private var revealedCookie: HTTPCookie?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,7 +17,8 @@ struct CookiePane: View {
             KeyValueEditor(
                 items: $cookies,
                 keyPlaceholder: l10n(.cookieNamePlaceholder),
-                valuePlaceholder: l10n(.cookieValuePlaceholder)
+                valuePlaceholder: l10n(.cookieValuePlaceholder),
+                variableTable: .cookies
             )
             .frame(maxHeight: 200)
             Divider()
@@ -77,6 +79,7 @@ struct CookiePane: View {
             Spacer()
 
             Button(l10n(.cookieSessionClear)) {
+                revealedCookie = nil
                 app.clearCookieJar()
             }
             .font(.system(size: 11))
@@ -112,17 +115,23 @@ struct CookiePane: View {
     }
 
     private func row(_ cookie: HTTPCookie) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: cookie.isSecure ? "lock.fill" : "globe")
+        let revealed = revealedCookie === cookie
+        let visibilityLabel = l10n(revealed ? .cookieHideValue : .cookieShowValue)
+        return HStack(alignment: .top, spacing: 10) {
+            Image(icon: cookie.isSecure ? .secure : .insecure)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(cookie.name)=\(cookie.value)")
+                Text(cookie.name)
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
-                    .lineLimit(2)
+                if revealed {
+                    Text(cookie.value)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                }
 
                 HStack(spacing: 8) {
                     Text("\(l10n(.cookieDomainLabel)): \(cookie.domain)")
@@ -134,6 +143,19 @@ struct CookiePane: View {
             }
 
             Spacer()
+
+            Button {
+                revealedCookie = revealed ? nil : cookie
+            } label: {
+                Image(icon: revealed ? .hide : .show)
+            }
+            .buttonStyle(.borderless)
+            .help(visibilityLabel)
+            .accessibilityLabel(visibilityLabel)
+
+            CopyButton(title: l10n(.cookieCopyValue)) { cookie.value }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)

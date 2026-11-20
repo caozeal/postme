@@ -123,10 +123,6 @@ struct EditorTab: Identifiable, Codable {
     /// 响应体展示文本（已按语言美化/截断），收到响应或切换语言时算一次。
     var responseBodyText: String = ""
     var errorMessage: String?
-    /// 上一次发送中未能解析的变量名，用于界面提示。
-    var unresolvedVariables: [String] = []
-    /// 上一次发送中未填写的路径参数名（URL 里的 `{name}` / `:name`）。
-    var unresolvedPathParams: [String] = []
     var isSending: Bool = false
     var agentRunID: UUID?
     var agentRunStartedAt: Date?
@@ -144,6 +140,12 @@ struct EditorTab: Identifiable, Codable {
     /// 是否有未保存的修改。
     var isDirty: Bool { draft != baseline }
 
+    var draftChangedSinceRun: Bool? { agentRunRequest.map { $0 != draft } }
+
+    func environmentChangedSinceRun(_ currentID: UUID?) -> Bool? {
+        agentRunID.map { _ in agentRunEnvironmentID != currentID }
+    }
+
     /// 工作区重载时按 id 把不落盘的运行期状态从旧页签搬过来。
     /// 磁盘只带 `draft` / `baseline` / `nodeID`，其余字段都是进程内状态，
     /// 不该因为别的进程改过磁盘就凭空消失。
@@ -154,8 +156,6 @@ struct EditorTab: Identifiable, Codable {
         response = old.response
         responseBodyText = old.responseBodyText
         errorMessage = old.errorMessage
-        unresolvedVariables = old.unresolvedVariables
-        unresolvedPathParams = old.unresolvedPathParams
         isSending = old.isSending
         agentRunID = old.agentRunID
         agentRunStartedAt = old.agentRunStartedAt
@@ -174,8 +174,6 @@ struct EditorTab: Identifiable, Codable {
         response = nil
         responseBodyText = ""
         errorMessage = nil
-        unresolvedVariables = []
-        unresolvedPathParams = []
         // 流式内容必须一起清：否则「清空响应」后事件分页里还留着上一次的事件，
         // 看起来像是新请求收到了数据。
         stream = StreamState()

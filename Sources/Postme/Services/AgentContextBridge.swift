@@ -104,7 +104,7 @@ final class AgentContextBridge {
                 connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard result == 0 else { throw CLIError("Open Postme and enable Agent context in Settings for this session.", code: "context_unavailable") }
+        guard result == 0 else { throw CLIError("Open Postme and ensure Agent context remains enabled in Settings.", code: "context_unavailable") }
         var peerUID: uid_t = 0; var peerGID: gid_t = 0
         guard getpeereid(fd, &peerUID, &peerGID) == 0, peerUID == getuid() else {
             throw CLIError("Context endpoint belongs to another user.")
@@ -123,7 +123,7 @@ final class AgentContextBridge {
 }
 
 /// Deliberately conservative export: raw body/SSE text and all header values are withheld.
-/// JSON bodies expose structure and primitive values except sensitive keys; opt-in UI explains limits.
+/// JSON bodies expose structure and primitive values except sensitive keys; the settings UI explains limits.
 enum AgentContextSanitizer {
     static func sensitive(_ key: String) -> Bool {
         let key = key.lowercased().filter { $0.isLetter || $0.isNumber }

@@ -21,6 +21,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case formatButton
     case minifyButton
     case copyButton
+    case copySucceeded
     case copyAllButton
     case copyURLButton
     case copyCurlButton
@@ -42,6 +43,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case sidebarSearchPlaceholder
     case sidebarSearchResultsSection
     case sidebarNoSearchResults
+    case sidebarClearSearch
     case sidebarTreeSection
     case sidebarEmptyProject
     case sidebarHistorySection
@@ -66,6 +68,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     case tabCloseDiscard
     case tabCloseMessage
     case tabCloseHelp
+    case tabCloseNamed
+    case tabUnsavedAccessibility
+    case menuPreviousTab
+    case menuNextTab
     case tabMenuDuplicate
     case tabMenuClose
     case tabMenuCloseOthers
@@ -111,9 +117,15 @@ enum L10nKey: String, CaseIterable, Sendable {
     case pathParamValuePlaceholder
     case pathParamEmptyHelp
     case unresolvedPathParamsBanner
+    case requestEditPathParams
     case finalURLLabel
     case validJSON
     case invalidJSON
+    case validResolvedJSON
+    case invalidResolvedJSON
+    case emptyJSONBody
+    case formatRequiresValidDraftJSON
+    case requestBodyTypeLabel
     case emptyBodyHint
     case multipartHint
     case formFieldKeyPlaceholder
@@ -130,6 +142,10 @@ enum L10nKey: String, CaseIterable, Sendable {
 
     // MARK: - 分页
 
+    case requestSectionPickerLabel
+    case requestURLField
+    case requestVariableRow
+    case requestMoreActions
     case requestTabParams
     case requestTabHeaders
     case requestTabBody
@@ -143,6 +159,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     case cookieSessionHeader
     case cookieSessionEmpty
     case cookieSessionClear
+    case cookieShowValue
+    case cookieHideValue
+    case cookieCopyValue
     case cookieSessionCount
     case cookieSessionMatching
     case cookieDomainLabel
@@ -155,6 +174,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     case authKindBearer
     case authKindBasic
     case authKindAPIKey
+    case authMissingBearerToken
+    case authMissingBasicCredentials
+    case authMissingAPIKeyName
+    case authMissingAPIKeyValue
     case authBearerTokenLabel
     case authBearerTokenPlaceholder
     case authUsernameLabel
@@ -177,8 +200,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     case responseTabEvents
     case responseTabHeaders
     case responseTabTiming
+    case responseSectionPickerLabel
     case findInResponseHelp
     case saveAsExampleButton
+    case responseMoreActions
     case saveAsExampleHelp
     case saveAsExampleNeedsSavedRequest
     case examplesMenu
@@ -209,7 +234,21 @@ enum L10nKey: String, CaseIterable, Sendable {
     // MARK: - 响应区
 
     case sendingProgress
+    case responseEmptyTitle
+    case responseEmptyURLHint
     case responseEmptyHint
+    case responseCancelledTitle
+    case responseCancelledHint
+    case responseBodyEmpty
+    case responseBodyWaiting
+    case responseDetailsWaiting
+    case responseDetailsUnavailable
+    case responseDetailsInterrupted
+    case responseHeadersPending
+    case responseTimingPending
+    case previousResponseRequestChanged
+    case previousResponseEnvironmentChanged
+    case previousResponseRequestAndEnvironmentChanged
     case streamStatusStreaming
     case streamStatusClosed
     case streamStatusCancelled
@@ -219,7 +258,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     case streamEventUnterminated
     case streamAutoScroll
     case streamCopyEvent
-    case streamEmptyHint
+    case streamWaitingForEvent
+    case streamNoEvents
+    case streamRawBodyHint
     case llmFieldLabel
     case llmFieldPickerHelp
     case llmPieceSummary
@@ -230,6 +271,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case llmFormatUnknown
     case llmOtherFieldsHeader
     case llmNoJoinableFields
+    case llmNoJoinableFieldsTitle
     case llmCustomPathButton
     case llmCustomPathTitle
     case llmCustomPathPlaceholder
@@ -319,6 +361,11 @@ enum L10nKey: String, CaseIterable, Sendable {
 
     // MARK: - 设置
 
+    case settingsAgentContextSection
+    case settingsAgentContextEnabled
+    case settingsAgentContextLifecycle
+    case settingsAgentContextScope
+    case settingsAgentContextPrivacy
     case settingsRequestsSection
     case settingsTimeout
     case settingsSeconds
@@ -518,6 +565,7 @@ enum L10nTable {
         .formatButton: "格式化",
         .minifyButton: "压缩",
         .copyButton: "复制",
+        .copySucceeded: "已复制",
         .copyAllButton: "复制全部",
         .copyURLButton: "复制 URL",
         .copyCurlButton: "复制为 cURL",
@@ -527,7 +575,7 @@ enum L10nTable {
 
         .sidebarProjectsTitle: "项目",
         .sidebarNewFolder: "新建文件夹",
-        .sidebarImportExport: "导入",
+        .sidebarImportExport: "导入／导出",
         .sidebarImportExportHelp: "导入项目或请求，或导出当前项目",
         .sidebarNewProjectEllipsis: "新建项目…",
         .sidebarRenameProjectEllipsis: "重命名项目…",
@@ -537,8 +585,9 @@ enum L10nTable {
         .sidebarSearchPlaceholder: "搜索请求",
         .sidebarSearchResultsSection: "搜索结果（%d）",
         .sidebarNoSearchResults: "没有匹配的请求",
+        .sidebarClearSearch: "清除搜索",
         .sidebarTreeSection: "目录",
-        .sidebarEmptyProject: "当前项目还是空的，点右上角 ＋ 新建",
+        .sidebarEmptyProject: "此项目还没有请求",
         .sidebarHistorySection: "历史",
         .sidebarHistoryExpand: "展开历史",
         .sidebarHistoryCollapse: "收起历史",
@@ -561,6 +610,10 @@ enum L10nTable {
         .tabCloseDiscard: "放弃修改",
         .tabCloseMessage: "「%@」的修改还没保存，关闭后就会丢失。",
         .tabCloseHelp: "关闭页签",
+        .tabCloseNamed: "关闭页签「%@」",
+        .tabUnsavedAccessibility: "有未保存的更改",
+        .menuPreviousTab: "上一个请求页签",
+        .menuNextTab: "下一个请求页签",
         .tabMenuDuplicate: "克隆页签",
         .tabMenuClose: "关闭页签",
         .tabMenuCloseOthers: "关闭其他页签",
@@ -583,7 +636,7 @@ enum L10nTable {
         .projectNamePlaceholder: "项目名",
         .renameProjectTitle: "重命名项目",
 
-        .unresolvedVariablesBanner: "以下变量未定义，已按原文发出：",
+        .unresolvedVariablesBanner: "未定义的变量：%@",
         .saveHelpOverwrite: "覆盖保存到当前项目 (⌘S)",
         .saveHelpNew: "保存到当前项目 (⌘S)",
         .sendButton: "发送",
@@ -603,11 +656,17 @@ enum L10nTable {
         .pathParamsCount: "共 %d 个",
         .pathParamValuePlaceholder: "路径参数值，或 {{变量名}}",
         .pathParamEmptyHelp: "路径参数为空，发送时会保留占位符",
-        .unresolvedPathParamsBanner: "以下路径参数未填写，已按原文发出：",
+        .unresolvedPathParamsBanner: "未填写的路径参数：%@",
+        .requestEditPathParams: "打开 Params 分页",
         .finalURLLabel: "最终 URL",
         .validJSON: "合法 JSON",
         .invalidJSON: "JSON 语法有误",
-        .emptyBodyHint: "该请求不带请求体。",
+        .validResolvedJSON: "替换变量后 JSON 有效",
+        .invalidResolvedJSON: "替换变量后 JSON 无效",
+        .emptyJSONBody: "JSON 正文为空",
+        .formatRequiresValidDraftJSON: "格式化和压缩需要编辑器中的正文是有效 JSON。",
+        .requestBodyTypeLabel: "请求体类型",
+        .emptyBodyHint: "可在上方选择请求体类型。",
         .multipartHint: "文本字段与文件字段会一起编码为 multipart/form-data。",
         .formFieldKeyPlaceholder: "字段名",
         .formFieldValuePlaceholder: "字段值",
@@ -621,6 +680,10 @@ enum L10nTable {
         .addFileButton: "添加文件",
         .fileFieldMissing: "路径为空，发送会失败。",
 
+        .requestSectionPickerLabel: "请求分页",
+        .requestURLField: "请求 URL",
+        .requestVariableRow: "第 %d 行",
+        .requestMoreActions: "更多请求操作",
         .requestTabParams: "Params",
         .requestTabHeaders: "Headers",
         .requestTabBody: "Body",
@@ -630,6 +693,10 @@ enum L10nTable {
         .authKindBearer: "Bearer Token",
         .authKindBasic: "Basic Auth",
         .authKindAPIKey: "API Key",
+        .authMissingBearerToken: "请填写 Bearer Token。",
+        .authMissingBasicCredentials: "请填写用户名或密码。",
+        .authMissingAPIKeyName: "请填写 API Key 的名称。",
+        .authMissingAPIKeyValue: "请填写 API Key 的值。",
         .authBearerTokenLabel: "Token",
         .authBearerTokenPlaceholder: "输入 Token，或 {{变量名}}",
         .authUsernameLabel: "用户名",
@@ -644,7 +711,7 @@ enum L10nTable {
         .authLocationHeader: "Header",
         .authLocationQuery: "Query",
         .authHint: "认证在发送前注入，支持 {{变量}}；已有启用的同名 Header 或参数时，以手写的那一条为准。",
-        .authNoneHint: "该请求不带认证。",
+        .authNoneHint: "未启用自动认证。可在 Headers 分页手动填写认证头。",
         .authShowSecretHelp: "显示",
         .authHideSecretHelp: "隐藏",
         .requestTabCookies: "Cookie",
@@ -656,6 +723,9 @@ enum L10nTable {
         .cookieSessionHeader: "会话 Cookie",
         .cookieSessionEmpty: "本次运行还没有收到 Cookie。",
         .cookieSessionClear: "清空会话 Cookie",
+        .cookieShowValue: "显示 Cookie 值",
+        .cookieHideValue: "隐藏 Cookie 值",
+        .cookieCopyValue: "复制 Cookie 值",
         .cookieSessionCount: "共 %d 条",
         .cookieSessionMatching: "当前请求会带上 %d 条",
         .cookieDomainLabel: "域",
@@ -670,6 +740,8 @@ enum L10nTable {
         .responseTabTiming: "耗时",
         .findInResponseHelp: "在响应正文中查找（⌥⌘F）",
         .saveAsExampleButton: "存为示例",
+        .responseSectionPickerLabel: "响应分页",
+        .responseMoreActions: "更多响应操作",
         .saveAsExampleHelp: "把这次响应保存为该请求的示例",
         .saveAsExampleNeedsSavedRequest: "先保存请求，才能保存响应示例。",
         .examplesMenu: "示例",
@@ -694,7 +766,21 @@ enum L10nTable {
         .addRowButton: "添加一行",
 
         .sendingProgress: "请求中…",
+        .responseEmptyTitle: "暂无响应",
+        .responseEmptyURLHint: "填写上方的请求 URL，再点击「发送」。",
         .responseEmptyHint: "发送请求后，响应会显示在这里",
+        .responseCancelledTitle: "请求已取消",
+        .responseCancelledHint: "可在上方重新发送请求。",
+        .responseBodyEmpty: "响应正文为空",
+        .responseBodyWaiting: "等待响应正文",
+        .responseDetailsWaiting: "等待流结束",
+        .responseDetailsUnavailable: "响应详情不可用",
+        .responseDetailsInterrupted: "本次流提前结束，无法在此查看完整的响应详情。",
+        .responseHeadersPending: "流正常结束后可在这里查看响应头。",
+        .responseTimingPending: "流正常结束后可在这里查看耗时明细。",
+        .previousResponseRequestChanged: "上一次响应 · 请求已更改",
+        .previousResponseEnvironmentChanged: "上一次响应 · 环境已切换",
+        .previousResponseRequestAndEnvironmentChanged: "上一次响应 · 请求和环境均已更改",
         .streamStatusStreaming: "接收中",
         .streamStatusClosed: "已结束",
         .streamStatusCancelled: "已取消",
@@ -704,7 +790,9 @@ enum L10nTable {
         .streamEventUnterminated: "流结束时该事件未以空行收尾",
         .streamAutoScroll: "自动滚动",
         .streamCopyEvent: "复制事件数据",
-        .streamEmptyHint: "尚未收到事件",
+        .streamWaitingForEvent: "等待首个 SSE 事件",
+        .streamNoEvents: "未收到 SSE 事件",
+        .streamRawBodyHint: "可在 Body 分页查看原始响应。",
         .llmFieldLabel: "字段",
         .llmFieldPickerHelp: "选择要拼接的字段",
         .llmPieceSummary: "%d 片 · %@",
@@ -714,7 +802,8 @@ enum L10nTable {
         .llmFormatCustom: "格式: 自定义路径",
         .llmFormatUnknown: "格式: 未识别",
         .llmOtherFieldsHeader: "其他字段",
-        .llmNoJoinableFields: "这些事件里没有可拼接的字段（解析 %d，未解析 %d）",
+        .llmNoJoinableFieldsTitle: "没有可拼接的字段",
+        .llmNoJoinableFields: "已解析 %d 个事件，未解析 %d 个。",
         .llmCustomPathButton: "自定义路径…",
         .llmCustomPathTitle: "自定义字段路径",
         .llmCustomPathPlaceholder: "choices[0].delta.content",
@@ -796,6 +885,11 @@ enum L10nTable {
         .postmanErrorEmpty: "集合中没有可导入的请求",
         .postmanErrorNoProject: "没有可导出的项目",
 
+        .settingsAgentContextSection: "Agent 上下文",
+        .settingsAgentContextEnabled: "启用 Agent 上下文",
+        .settingsAgentContextLifecycle: "Postme 启动时默认开启。关闭开关可立即撤销访问。",
+        .settingsAgentContextScope: "允许以当前用户身份运行的本地进程只读访问请求、项目和环境的名称及 ID，以及请求状态和有限的 JSON 结果。",
+        .settingsAgentContextPrivacy: "响应正文中的自由文本会被过滤，JSON 字段名和数值仍可能敏感。Agent 可能将数据发送给模型服务。",
         .settingsRequestsSection: "请求",
         .settingsTimeout: "超时时间",
         .settingsSeconds: "%d 秒",
@@ -955,6 +1049,7 @@ enum L10nTable {
         .formatButton: "Format",
         .minifyButton: "Minify",
         .copyButton: "Copy",
+        .copySucceeded: "Copied",
         .copyAllButton: "Copy All",
         .copyURLButton: "Copy URL",
         .copyCurlButton: "Copy as cURL",
@@ -964,7 +1059,7 @@ enum L10nTable {
 
         .sidebarProjectsTitle: "Projects",
         .sidebarNewFolder: "New Folder",
-        .sidebarImportExport: "Import",
+        .sidebarImportExport: "Import / Export",
         .sidebarImportExportHelp: "Import projects or requests, or export the current project",
         .sidebarNewProjectEllipsis: "New Project…",
         .sidebarRenameProjectEllipsis: "Rename Project…",
@@ -974,8 +1069,9 @@ enum L10nTable {
         .sidebarSearchPlaceholder: "Search requests",
         .sidebarSearchResultsSection: "Search results: %d",
         .sidebarNoSearchResults: "No matching requests",
+        .sidebarClearSearch: "Clear Search",
         .sidebarTreeSection: "Requests",
-        .sidebarEmptyProject: "This project is empty. Use ＋ in the top right to add something.",
+        .sidebarEmptyProject: "This project has no requests yet",
         .sidebarHistorySection: "History",
         .sidebarHistoryExpand: "Expand history",
         .sidebarHistoryCollapse: "Collapse history",
@@ -998,6 +1094,10 @@ enum L10nTable {
         .tabCloseDiscard: "Discard Changes",
         .tabCloseMessage: "\"%@\" has unsaved changes that will be lost.",
         .tabCloseHelp: "Close Tab",
+        .tabCloseNamed: "Close tab “%@”",
+        .tabUnsavedAccessibility: "Unsaved changes",
+        .menuPreviousTab: "Previous Request Tab",
+        .menuNextTab: "Next Request Tab",
         .tabMenuDuplicate: "Duplicate Tab",
         .tabMenuClose: "Close Tab",
         .tabMenuCloseOthers: "Close Other Tabs",
@@ -1020,7 +1120,7 @@ enum L10nTable {
         .projectNamePlaceholder: "Project name",
         .renameProjectTitle: "Rename Project",
 
-        .unresolvedVariablesBanner: "Undefined variables, sent as written:",
+        .unresolvedVariablesBanner: "Undefined variables: %@",
         .saveHelpOverwrite: "Overwrite the saved request (⌘S)",
         .saveHelpNew: "Save to the current project (⌘S)",
         .sendButton: "Send",
@@ -1040,11 +1140,17 @@ enum L10nTable {
         .pathParamsCount: "%d total",
         .pathParamValuePlaceholder: "Path value, or {{variable}}",
         .pathParamEmptyHelp: "Empty path parameter; the placeholder is sent as written",
-        .unresolvedPathParamsBanner: "These path parameters are empty and were sent as written:",
+        .unresolvedPathParamsBanner: "Missing path parameters: %@",
+        .requestEditPathParams: "Open the Params tab",
         .finalURLLabel: "Final URL",
         .validJSON: "Valid JSON",
         .invalidJSON: "Invalid JSON syntax",
-        .emptyBodyHint: "This request has no body.",
+        .validResolvedJSON: "JSON valid after substitution",
+        .invalidResolvedJSON: "JSON invalid after substitution",
+        .emptyJSONBody: "Empty JSON body",
+        .formatRequiresValidDraftJSON: "Format and Minify require valid JSON in the editor.",
+        .requestBodyTypeLabel: "Request body type",
+        .emptyBodyHint: "Choose a request body type above.",
         .multipartHint: "Text fields and file fields are encoded together as multipart/form-data.",
         .formFieldKeyPlaceholder: "Field name",
         .formFieldValuePlaceholder: "Field value",
@@ -1058,6 +1164,10 @@ enum L10nTable {
         .addFileButton: "Add File",
         .fileFieldMissing: "Path is empty; sending will fail.",
 
+        .requestSectionPickerLabel: "Request section",
+        .requestURLField: "Request URL",
+        .requestVariableRow: "Row %d",
+        .requestMoreActions: "More Request Actions",
         .requestTabParams: "Params",
         .requestTabHeaders: "Headers",
         .requestTabBody: "Body",
@@ -1067,6 +1177,10 @@ enum L10nTable {
         .authKindBearer: "Bearer Token",
         .authKindBasic: "Basic Auth",
         .authKindAPIKey: "API Key",
+        .authMissingBearerToken: "Enter a Bearer token.",
+        .authMissingBasicCredentials: "Enter a username or password.",
+        .authMissingAPIKeyName: "Enter an API key name.",
+        .authMissingAPIKeyValue: "Enter an API key value.",
         .authBearerTokenLabel: "Token",
         .authBearerTokenPlaceholder: "Token, or {{variable}}",
         .authUsernameLabel: "Username",
@@ -1081,7 +1195,7 @@ enum L10nTable {
         .authLocationHeader: "Header",
         .authLocationQuery: "Query",
         .authHint: "Auth is applied before sending and supports {{variables}}. If an enabled header or parameter with the same name already exists, your explicit row wins.",
-        .authNoneHint: "This request has no auth.",
+        .authNoneHint: "Automatic auth is off. You can add an auth header in the Headers tab.",
         .authShowSecretHelp: "Show",
         .authHideSecretHelp: "Hide",
         .requestTabCookies: "Cookies",
@@ -1093,6 +1207,9 @@ enum L10nTable {
         .cookieSessionHeader: "Session Cookies",
         .cookieSessionEmpty: "No cookies received in this run yet.",
         .cookieSessionClear: "Clear Session Cookies",
+        .cookieShowValue: "Show Cookie Value",
+        .cookieHideValue: "Hide Cookie Value",
+        .cookieCopyValue: "Copy Cookie Value",
         .cookieSessionCount: "%d cookies",
         .cookieSessionMatching: "%d will be sent with this request",
         .cookieDomainLabel: "Domain",
@@ -1107,6 +1224,8 @@ enum L10nTable {
         .responseTabTiming: "Timing",
         .findInResponseHelp: "Find in the response body (⌥⌘F)",
         .saveAsExampleButton: "Save as Example",
+        .responseSectionPickerLabel: "Response Section",
+        .responseMoreActions: "More Response Actions",
         .saveAsExampleHelp: "Save this response as an example of the request",
         .saveAsExampleNeedsSavedRequest: "Save the request first to keep response examples.",
         .examplesMenu: "Examples",
@@ -1131,7 +1250,21 @@ enum L10nTable {
         .addRowButton: "Add Row",
 
         .sendingProgress: "Sending…",
+        .responseEmptyTitle: "No response yet",
+        .responseEmptyURLHint: "Enter a request URL above, then click Send.",
         .responseEmptyHint: "Send a request to see the response here",
+        .responseCancelledTitle: "Request cancelled",
+        .responseCancelledHint: "You can send the request again above.",
+        .responseBodyEmpty: "Empty response body",
+        .responseBodyWaiting: "Waiting for response body",
+        .responseDetailsWaiting: "Waiting for stream to finish",
+        .responseDetailsUnavailable: "Response details unavailable",
+        .responseDetailsInterrupted: "The stream ended early, so full response details are unavailable.",
+        .responseHeadersPending: "Response headers will appear here when the stream completes.",
+        .responseTimingPending: "Timing details will appear here when the stream completes.",
+        .previousResponseRequestChanged: "Previous response · Request changed",
+        .previousResponseEnvironmentChanged: "Previous response · Environment switched",
+        .previousResponseRequestAndEnvironmentChanged: "Previous response · Request and environment changed",
         .streamStatusStreaming: "Streaming",
         .streamStatusClosed: "Closed",
         .streamStatusCancelled: "Cancelled",
@@ -1141,7 +1274,9 @@ enum L10nTable {
         .streamEventUnterminated: "Event not terminated by a blank line before the stream closed",
         .streamAutoScroll: "Auto-scroll",
         .streamCopyEvent: "Copy event data",
-        .streamEmptyHint: "No events received yet",
+        .streamWaitingForEvent: "Waiting for first SSE event",
+        .streamNoEvents: "No SSE events received",
+        .streamRawBodyHint: "See the Body tab for the raw response.",
         .llmFieldLabel: "Field",
         .llmFieldPickerHelp: "Choose the field to join",
         .llmPieceSummary: "%d pieces · %@",
@@ -1151,7 +1286,8 @@ enum L10nTable {
         .llmFormatCustom: "Format: custom paths",
         .llmFormatUnknown: "Format: unrecognized",
         .llmOtherFieldsHeader: "Other fields",
-        .llmNoJoinableFields: "No joinable fields in these events (parsed %d, unparsed %d)",
+        .llmNoJoinableFieldsTitle: "No fields to combine",
+        .llmNoJoinableFields: "Parsed %d events, unparsed %d.",
         .llmCustomPathButton: "Custom path…",
         .llmCustomPathTitle: "Custom field path",
         .llmCustomPathPlaceholder: "choices[0].delta.content",
@@ -1233,6 +1369,11 @@ enum L10nTable {
         .postmanErrorEmpty: "The collection has no importable requests",
         .postmanErrorNoProject: "There is no project to export",
 
+        .settingsAgentContextSection: "Agent context",
+        .settingsAgentContextEnabled: "Enable Agent context",
+        .settingsAgentContextLifecycle: "On by default when Postme launches. Turn it off to revoke access immediately.",
+        .settingsAgentContextScope: "Local processes running as you can read request, project, and environment names and IDs, request status, and limited JSON results.",
+        .settingsAgentContextPrivacy: "Free text in response bodies is filtered. JSON field names and numeric data may still be sensitive. Agents may send data to their model provider.",
         .settingsRequestsSection: "Requests",
         .settingsTimeout: "Timeout",
         .settingsSeconds: "%d s",

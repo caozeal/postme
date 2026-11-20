@@ -66,7 +66,7 @@ struct ContentView: View {
                     Button {
                         app.showSaveIssueDetails()
                     } label: {
-                        Label(app.t(.saveFailedBadge), systemImage: "exclamationmark.triangle.fill")
+                        Label(app.t(.saveFailedBadge), icon: .failure)
                             .foregroundStyle(.red)
                     }
                 }
@@ -207,7 +207,8 @@ struct ContentView: View {
             Button(app.t(.editEnvironments)) { app.showEnvironmentEditor = true }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "globe")
+                Image(icon: .environment)
+                    .foregroundStyle(BrandColor.icon)
                 Text(app.activeEnvironment?.name ?? app.t(.noEnvironment))
             }
         }

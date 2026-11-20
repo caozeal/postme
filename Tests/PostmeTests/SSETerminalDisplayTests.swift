@@ -53,6 +53,34 @@ final class SSETerminalDisplayTests: XCTestCase {
 
     // MARK: - B1：取消后的状态栏
 
+    func testResponseHintTracksDraftAndEnvironmentUntilRequestIsSentAgain() async throws {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let server = try LocalHTTPServer(routes: [
+            "/plain": .fixed(Data("result".utf8), contentType: "text/plain")
+        ])
+        defer { server.stop() }
+        app.draft.url = server.url("/plain")
+        XCTAssertNil(app.responseChangeHint)
+        await app.send()
+        let receivedAt = try XCTUnwrap(app.response?.receivedAt)
+        let originalURL = app.draft.url
+
+        app.draft.url += "?page=2"
+        XCTAssertEqual(app.responseChangeHint, .previousResponseRequestChanged)
+        let environmentID = app.addEnvironment(name: "Local")
+        app.selectEnvironment(id: environmentID)
+        XCTAssertEqual(app.responseChangeHint, .previousResponseRequestAndEnvironmentChanged)
+        app.draft.url = originalURL
+        XCTAssertEqual(app.responseChangeHint, .previousResponseEnvironmentChanged)
+        XCTAssertEqual(app.response?.receivedAt, receivedAt)
+        XCTAssertEqual(app.responseBodyText, "result")
+
+        await app.send()
+        XCTAssertNotNil(app.response)
+        XCTAssertNil(app.responseChangeHint)
+    }
+
     func testStartingSSEClearsPreviousResponseWhileStreaming() async throws {
         let (app, dir) = makeApp()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -71,8 +99,33 @@ final class SSETerminalDisplayTests: XCTestCase {
         XCTAssertEqual(app.activeTab.stream.status, .streaming)
         XCTAssertNil(app.response)
         XCTAssertTrue(app.responseBodyText.isEmpty)
+        app.draft.url += "?page=2"
+        XCTAssertNil(app.responseChangeHint, "接收中的流仍是本次响应")
         app.cancelSend()
         await send.value
+    }
+
+    func testFinishedStreamKeepsTheSelectedDetailsTab() async throws {
+        let (app, dir) = makeApp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let server = try LocalHTTPServer(routes: [
+            "/stream": .stream(chunks: [Data("data: ready\n\n".utf8)], interval: 0.8,
+                               contentType: "text/event-stream", closeAfterLast: true)
+        ])
+        defer { server.stop() }
+
+        app.draft.url = server.url("/stream")
+        let send = Task { await app.send() }
+        await waitUntil { app.activeTab.stream.status == .streaming }
+        XCTAssertEqual(app.activeTab.stream.status, .streaming)
+        XCTAssertEqual(app.responseSection, .events)
+
+        app.responseSection = .headers
+        await send.value
+
+        XCTAssertEqual(app.activeTab.stream.status, .closed)
+        XCTAssertNotNil(app.response)
+        XCTAssertEqual(app.responseSection, .headers)
     }
 
     func testCancelledStreamShowsCancelledNotReceiving() async throws {

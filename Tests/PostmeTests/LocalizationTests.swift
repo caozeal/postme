@@ -175,6 +175,25 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(app.t(.menuSendRequest), "Send Request")
     }
 
+    func testAgentContextSettingsStringsFollowLanguage() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let app = AppState(persistence: PersistenceService(directory: dir), languageOverride: .zhHans)
+
+        XCTAssertEqual(app.t(.settingsAgentContextSection), "Agent 上下文")
+        XCTAssertEqual(app.t(.settingsAgentContextEnabled), "启用 Agent 上下文")
+        XCTAssertTrue(app.t(.settingsAgentContextLifecycle).contains("默认开启"))
+        XCTAssertTrue(app.t(.settingsAgentContextScope).contains("只读访问"))
+        XCTAssertTrue(app.t(.settingsAgentContextPrivacy).contains("模型服务"))
+
+        app.setLanguage(.en)
+        XCTAssertEqual(app.t(.settingsAgentContextSection), "Agent context")
+        XCTAssertEqual(app.t(.settingsAgentContextEnabled), "Enable Agent context")
+        XCTAssertTrue(app.t(.settingsAgentContextLifecycle).contains("On by default"))
+        XCTAssertTrue(app.t(.settingsAgentContextScope).contains("Local processes running as you"))
+        XCTAssertTrue(app.t(.settingsAgentContextPrivacy).contains("model provider"))
+    }
+
     func testSetLanguageRecomputesResponseBodyTextAndClearsMessages() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

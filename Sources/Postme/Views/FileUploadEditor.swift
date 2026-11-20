@@ -12,6 +12,7 @@ struct BinaryBodyEditor: View {
                 TextField(app.t(.filePathPlaceholder), text: $draft.binaryFilePath)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12, design: .monospaced))
+                    .requestVariableField(.binaryPath)
 
                 Button(app.t(.chooseFileButton)) { chooseFile() }
             }
@@ -32,7 +33,7 @@ struct BinaryBodyEditor: View {
     private var fileStatus: some View {
         let path = draft.binaryFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
         if path.isEmpty {
-            Label(app.t(.binaryFileMissing), systemImage: "exclamationmark.triangle")
+            Label(app.t(.binaryFileMissing), icon: .warning)
                 .font(.system(size: 11))
                 .foregroundStyle(.orange)
         } else {
@@ -42,13 +43,13 @@ struct BinaryBodyEditor: View {
                 let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
                 Label(
                     "\(URL(fileURLWithPath: resolved).lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) · \(RequestExecutor.mimeType(for: resolved))",
-                    systemImage: "doc"
+                    icon: .file
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             } else {
-                Label(app.t(.fileUnreadableHint), systemImage: "exclamationmark.triangle.fill")
+                Label(app.t(.fileUnreadableHint), icon: .failure)
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
             }
@@ -85,6 +86,7 @@ struct FileFieldEditor: View {
                 LazyVStack(spacing: 0) {
                     ForEach(items) { item in
                         row(item: binding(for: item.id), id: item.id)
+                            .id(AnyHashable(RequestVariableField.row(.files, item.id, .name)))
                         Divider()
                     }
                     addRow
@@ -114,18 +116,20 @@ struct FileFieldEditor: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .requestVariableField(.row(.files, id, .name))
 
             TextField(app.t(.filePathPlaceholder), text: item.path)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .requestVariableField(.row(.files, id, .value))
 
             fileStatus(item.wrappedValue)
 
             Button {
                 chooseFile(for: item)
             } label: {
-                Image(systemName: "folder")
+                Image(icon: .folder)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
@@ -135,7 +139,7 @@ struct FileFieldEditor: View {
             Button {
                 items.removeAll { $0.id == id }
             } label: {
-                Image(systemName: "minus.circle")
+                Image(icon: .remove)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
@@ -150,15 +154,15 @@ struct FileFieldEditor: View {
     @ViewBuilder
     private func fileStatus(_ field: FileField) -> some View {
         if field.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            Image(systemName: "exclamationmark.triangle")
+            Image(icon: .warning)
                 .foregroundStyle(.orange)
                 .help(app.t(.fileFieldMissing))
         } else if !FileManager.default.fileExists(atPath: field.resolvedPath) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(icon: .failure)
                 .foregroundStyle(.red)
                 .help(app.t(.fileUnreadableHint))
         } else {
-            Image(systemName: "checkmark.circle")
+            Image(icon: .completed)
                 .foregroundStyle(.secondary)
                 .help(field.fileName)
         }
@@ -181,7 +185,7 @@ struct FileFieldEditor: View {
         Button {
             items.append(FileField())
         } label: {
-            Label(app.t(.addFileButton), systemImage: "plus")
+            Label(app.t(.addFileButton), icon: .add)
                 .font(.system(size: 12))
         }
         .buttonStyle(.borderless)

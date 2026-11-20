@@ -31,16 +31,19 @@ Postme 是 macOS API 工作区。CLI 与 GUI 共用数据；默认目录为 `~/L
 
 `request show`、JSON 格式的环境列表、导入文件和导出集合可能包含令牌、密码或其他敏感值；仅在任务需要时读取或展示，报告时避免无关泄露。测试写操作时使用独立的 `--data-dir`，不要触碰真实工作区。
 
-## Live GUI context (read-only, session opt-in)
+## Live GUI context (read-only, enabled by default)
 
 `postme context current --json` reads an atomic snapshot from the running GUI.
-The user must enable **Agent context** in Settings each session. Do not enable it
-on their behalf. This endpoint never sends HTTP or changes workspace data.
+Postme enables **Agent context** when its GUI launches. The user can turn it off
+in Settings to revoke access immediately; do not change that setting on their
+behalf. This endpoint never sends HTTP or changes workspace data.
 
 Use sessionID + tabID + runID to correlate results. `requestID` is null for an
 unsaved request; `draftID` still identifies it. Re-read after the user switches
 interface/environment or reruns; never attach an old result to a newer request.
-`draftChangedSinceRun` and `runEnvironmentID` identify changes since execution.
+`draftChangedSinceRun` and `environmentChangedSinceRun` identify edits or
+environment switches since execution; `runEnvironmentID` identifies the
+environment used by that run.
 `resultComplete=false` means running, cancelled, failed, absent or truncated,
 not success. `http_error` describes non-2xx HTTP, not a test assertion verdict.
 

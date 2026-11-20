@@ -150,12 +150,12 @@ final class AppState {
             "runEnvironmentID": tab.agentRunEnvironmentID?.uuidString as Any? ?? NSNull(),
             "runMethod": tab.agentRunRequest?.method.rawValue as Any? ?? NSNull(),
             "runRequestName": tab.agentRunRequest.map { label($0.name) } as Any? ?? NSNull(),
-            "environmentChangedSinceRun": tab.agentRunID.map { _ in tab.agentRunEnvironmentID != workspace.activeEnvironmentID } as Any? ?? NSNull(),
-            "draftChangedSinceRun": tab.agentRunRequest.map { $0 != tab.draft } as Any? ?? NSNull(),
+            "environmentChangedSinceRun": tab.environmentChangedSinceRun(workspace.activeEnvironmentID) as Any? ?? NSNull(),
+            "draftChangedSinceRun": tab.draftChangedSinceRun as Any? ?? NSNull(),
             "runStartedAt": tab.agentRunStartedAt.map { ISO8601DateFormatter().string(from: $0) } as Any? ?? NSNull(),
             "resultComplete": !tab.isSending && !tab.agentRunCancelled && tab.errorMessage == nil && tab.response != nil && !(tab.response?.isBodyTruncated ?? false),
             "errorPresent": tab.errorMessage != nil,
-            "privacy": "Session opt-in; Labels shared; URL, header values, errors and free-text body strings withheld. JSON structure and numeric values may still contain sensitive data."
+            "privacy": "Enabled by default; Labels shared; URL, header values, errors and free-text body strings withheld. JSON structure and numeric values may still contain sensitive data."
         ]
         if let response = tab.response {
             context["result"] = ["statusCode": response.statusCode, "durationSeconds": response.timing.total,
@@ -253,11 +253,19 @@ final class AppState {
         set { withActiveTab { $0.errorMessage = newValue } }
     }
 
-    /// 上一次发送中未能解析的变量名，用于界面提示。
-    var unresolvedVariables: [String] { activeTab.unresolvedVariables }
-
-    /// 上一次发送中未填写的路径参数名。
-    var unresolvedPathParams: [String] { activeTab.unresolvedPathParams }
+    /// 接收完成后，区分当前编辑内容与已展示的结果。
+    var responseChangeHint: L10nKey? {
+        let tab = activeTab
+        guard !tab.isSending else { return nil }
+        let draftChanged = tab.draftChangedSinceRun == true
+        let environmentChanged = tab.environmentChangedSinceRun(workspace.activeEnvironmentID) == true
+        switch (draftChanged, environmentChanged) {
+        case (true, true): return .previousResponseRequestAndEnvironmentChanged
+        case (true, false): return .previousResponseRequestChanged
+        case (false, true): return .previousResponseEnvironmentChanged
+        case (false, false): return nil
+        }
+    }
 
     // MARK: - 关闭页签的确认
 
@@ -500,14 +508,15 @@ final class AppState {
     // MARK: - 初始化
 
     convenience init() {
-        self.init(persistence: PersistenceService())
+        self.init(persistence: PersistenceService(), enableAgentContextOnLaunch: true)
     }
 
     /// 可注入持久化服务的初始化，供测试用独立目录构造实例。
     ///
     /// `languageOverride` 只在测试里用：在 `ensureActiveProject()` **之前**写进 settings，
     /// 让断言中文默认名的用例不依赖宿主系统语言。生产路径传 nil，行为不变。
-    init(persistence: PersistenceService, languageOverride: AppLanguage? = nil) {
+    /// `enableAgentContextOnLaunch` 让测试能使用隔离目录覆盖 GUI 默认开启的行为。
+    init(persistence: PersistenceService, languageOverride: AppLanguage? = nil, enableAgentContextOnLaunch: Bool = false) {
         var loaded = persistence.load()
         if let languageOverride {
             loaded.settings.language = languageOverride
@@ -526,6 +535,9 @@ final class AppState {
         // 所有写路径（防抖 / 立即 / 示例）的结果都回到这里。
         persistence.onSaveResult = { [weak self] result, generation in
             self?.handleSaveResult(result, generation: generation)
+        }
+        if enableAgentContextOnLaunch {
+            setAgentContextEnabled(true)
         }
         // 退出改由 AppDelegate.applicationShouldTerminate 拦截：willTerminate 发生时
         // 已经决定退出，既拿不到落盘结果也无法弹窗或阻止退出。
@@ -866,20 +878,31 @@ final class AppState {
     ///
     /// 顺序：环境变量 → 路径参数 → 认证 → Cookie。路径参数值本身也可以写
     /// `{{变量}}`，所以必须排在环境变量替换之后。
-    private func resolve(_ request: APIRequest) -> (request: APIRequest, unresolved: [String], unresolvedPathParams: [String]) {
-        var (resolved, unresolved) = VariableResolver.resolve(
+    struct PreparedRequest {
+        let request: APIRequest
+        let missingVariables: [MissingRequestVariable]
+        let unresolvedPathParams: [String]
+        let pathParameterNames: Set<String>
+
+        var unresolved: [String] { Set(missingVariables.map(\.name)).sorted() }
+    }
+
+    private func resolve(_ request: APIRequest) -> PreparedRequest {
+        let variables = VariableResolver.resolve(
             request,
             variables: activeEnvironment?.variableMap ?? [:]
         )
+        var resolved = variables.request
 
         var pathValues: [String: String] = [:]
         for item in resolved.pathParams where item.isEnabled {
             if pathValues[item.key] == nil { pathValues[item.key] = item.value }
         }
+        let pathParameterNames = Set(PathParams.placeholders(in: resolved.url))
         let pathResult = PathParams.apply(to: resolved.url, values: pathValues)
         resolved.url = pathResult.url
 
-        AuthApplier.apply(resolved.auth, to: &resolved)
+        let appliedAuth = AuthApplier.apply(resolved.auth, to: &resolved)
 
         // Cookie 在认证之后注入：显式 Cookie 头 / 手动行 / 会话 Jar 的优先级
         // 由 `CookieApplier` 收口。
@@ -889,13 +912,30 @@ final class AppState {
         } else {
             jarCookies = []
         }
-        CookieApplier.apply(manual: resolved.cookies, jar: jarCookies, to: &resolved)
+        let appliedCookies = CookieApplier.apply(manual: resolved.cookies, jar: jarCookies, to: &resolved)
+        let hasContentType = resolved.headers.contains {
+            $0.isEnabled && $0.key.caseInsensitiveCompare("Content-Type") == .orderedSame
+        }
 
-        return (resolved, unresolved, pathResult.unresolved)
+        let missing = variables.missingVariables.filter { diagnostic in
+            switch diagnostic.field {
+            case .rawContentType, .binaryContentType: return !hasContentType
+            default:
+                switch diagnostic.field.section {
+                case .auth: return appliedAuth
+                case .cookies: return appliedCookies
+                default: return true
+                }
+            }
+        }
+        return PreparedRequest(request: resolved, missingVariables: missing,
+                               unresolvedPathParams: pathResult.unresolved, pathParameterNames: pathParameterNames)
     }
 
-    /// 预览用：当前页签草稿做变量替换后的副本。
-    var resolvedDraft: APIRequest { resolve(draft).request }
+    /// 与发送使用同一份解析规则，供显示目标地址及提前提示缺项。
+    var preparedDraft: PreparedRequest {
+        resolve(draft)
+    }
 
     /// 让路径参数行与 URL 里的 `{name}` / `:name` 保持一致。
     ///
@@ -968,11 +1008,6 @@ final class AppState {
 
         let request = tabs[index].draft
         let resolved = resolve(request)
-        if let index = tabIndex(tabID) {
-            tabs[index].unresolvedVariables = resolved.unresolved
-            tabs[index].unresolvedPathParams = resolved.unresolvedPathParams
-        }
-
         var parser = SSEParser()
         var textDecoder = UTF8StreamDecoder()
         // 归并器逐事件累积；只有发布被节流（与事件、文本同一窗口）。
@@ -1249,7 +1284,6 @@ final class AppState {
             stream.status = .closed
             stream.endedAt = Date()
             tabs[index].stream = stream
-            tabs[index].responseSection = .events
         } else {
             tabs[index].responseSection = .body
             // 非 SSE 必须把上一次的流式状态彻底清掉：否则「事件」分页会继续出现在
@@ -1438,6 +1472,13 @@ final class AppState {
         syncProjectToActiveTab()
         syncSelectionToActiveTab()
         save()
+    }
+
+    func activateAdjacentTab(forward: Bool) {
+        guard tabs.count > 1 else { return }
+        let offset = forward ? 1 : tabs.count - 1
+        let index = (activeIndex + offset) % tabs.count
+        activateTab(id: tabs[index].id)
     }
 
     /// 请求关闭页签：干净的直接关，脏的先让用户决定。

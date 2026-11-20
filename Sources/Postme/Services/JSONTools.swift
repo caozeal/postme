@@ -10,7 +10,7 @@ enum JSONTools {
     /// 美化（缩进）JSON。输入非法返回 nil。
     static func pretty(_ text: String) -> String? {
         guard let object = parse(text) else { return nil }
-        let options: JSONSerialization.WritingOptions = [.prettyPrinted, .withoutEscapingSlashes]
+        let options: JSONSerialization.WritingOptions = [.prettyPrinted, .withoutEscapingSlashes, .fragmentsAllowed]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: options) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -18,7 +18,8 @@ enum JSONTools {
     /// 压缩 JSON。输入非法返回 nil。
     static func minify(_ text: String) -> String? {
         guard let object = parse(text) else { return nil }
-        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes]) else { return nil }
+        let options: JSONSerialization.WritingOptions = [.withoutEscapingSlashes, .fragmentsAllowed]
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: options) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 

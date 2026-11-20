@@ -34,7 +34,7 @@ struct JSONTreeView: View {
                 Button {
                     toggle(row.id)
                 } label: {
-                    Image(systemName: "chevron.right")
+                    Image(icon: .collapsed)
                         .font(.system(size: 9, weight: .semibold))
                         .rotationEffect(.degrees(row.isCollapsed ? 0 : 90))
                         .frame(width: 12, height: 12)

@@ -8,6 +8,7 @@ struct KeyValueEditor: View {
     /// 占位符由调用方本地化后传入（不设中文默认值，否则英文界面会漏出中文）。
     var keyPlaceholder: String
     var valuePlaceholder: String
+    var variableTable: RequestVariableField.Table? = nil
 
     private let controlWidth: CGFloat = 26
     private let spacing: CGFloat = 8
@@ -20,12 +21,17 @@ struct KeyValueEditor: View {
                 LazyVStack(spacing: 0) {
                     ForEach(items) { item in
                         row(item: binding(for: item.id), id: item.id)
+                            .id(variableField(item.id, .name).map(AnyHashable.init) ?? AnyHashable(item.id))
                         Divider()
                     }
                     addRow
                 }
             }
         }
+    }
+
+    private func variableField(_ id: UUID, _ column: RequestVariableField.Column) -> RequestVariableField? {
+        variableTable.map { .row($0, id, column) }
     }
 
     /// 按 **id** 取行绑定，不按下标。
@@ -57,16 +63,18 @@ struct KeyValueEditor: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .requestVariableField(variableField(id, .name))
 
             TextField(valuePlaceholder, text: item.value)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .requestVariableField(variableField(id, .value))
 
             Button {
                 items.removeAll { $0.id == id }
             } label: {
-                Image(systemName: "minus.circle")
+                Image(icon: .remove)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
@@ -95,7 +103,7 @@ struct KeyValueEditor: View {
         Button {
             items.append(KeyValueItem())
         } label: {
-            Label(app.t(.addRowButton), systemImage: "plus")
+            Label(app.t(.addRowButton), icon: .add)
                 .font(.system(size: 12))
         }
         .buttonStyle(.borderless)
